@@ -108,6 +108,14 @@
           <div class="text-secondary small mb-1">Pause a monitor (write)</div>
           <pre class="bg-body-tertiary p-2 small mb-0" style="white-space: pre-wrap;">curl -X POST -H 'Authorization: Bearer &lt;token&gt;' <%= publicBaseUrl %>/api/v1/sites/123/pause</pre>
         </div>
+        <div class="mb-3">
+          <div class="text-secondary small mb-1">Create HTTP monitor (write, admin or editor)</div>
+          <pre class="bg-body-tertiary p-2 small mb-0" style="white-space: pre-wrap;">curl -X POST -H 'Authorization: Bearer &lt;token&gt;' -H 'Content-Type: application/json' <%= publicBaseUrl %>/api/v1/sites -d '{"name":"My API","monitor_type":"active","url":"https://example.com/health","interval_seconds":60}'</pre>
+        </div>
+        <div class="mb-3">
+          <div class="text-secondary small mb-1">Create tag (write, admin)</div>
+          <pre class="bg-body-tertiary p-2 small mb-0" style="white-space: pre-wrap;">curl -X POST -H 'Authorization: Bearer &lt;token&gt;' -H 'Content-Type: application/json' <%= publicBaseUrl %>/api/v1/tags -d '{"name":"production"}'</pre>
+        </div>
         <div>
           <div class="text-secondary small mb-1">Prometheus scrape</div>
           <pre class="bg-body-tertiary p-2 small mb-0" style="white-space: pre-wrap;">scrape_configs:

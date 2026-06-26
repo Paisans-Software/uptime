@@ -206,7 +206,7 @@ If you want a **lightweight self-hosted Uptime Kuma alternative** that you can `
 
 ### REST API & metrics
 - Bearer-token authenticated REST under `/api/v1/` with `read` / `write` scopes (admins create them at `/settings/api-tokens`; users mint personal ones at `/settings/account`). **Full CRUD for monitors via JSON** — `POST /api/v1/sites` creates monitors of any of the 7 types, `PATCH /api/v1/sites/:id` does partial updates, `DELETE /api/v1/sites/:id` removes them, plus the existing pause / resume / check-now write actions. Strict per-type validation, ACL inheritance, owner-only ownership reassignment.
-- Endpoints: `health`, `sites`, `sites/:id`, `sites/:id/checks`, `sites/:id/incidents`, `incidents`, `tags`, `stats`, plus `pause` / `resume` / `check-now` / `DELETE` on a site.
+- Endpoints: `health`, `sites`, `sites/:id`, `sites/:id/checks`, `sites/:id/incidents`, `incidents`, `tags` (GET + POST/PATCH/DELETE), `stats`, plus `pause` / `resume` / `check-now` / `DELETE` on a site.
 - Every `/api/v1` response is filtered through the token owner's ACL, so non-admins can only see / act on monitors they have access to.
 - **Prometheus exporter** at `/metrics` — series for `uptime_monitor_up`, `uptime_monitor_response_time_ms`, `uptime_monitor_last_check_age_seconds`, `uptime_monitor_uptime_pct_24h`, `uptime_cert_days_remaining`, `uptime_domain_days_remaining` (registered-domain WHOIS / RDAP expiry, emitted for `domain` monitors), `uptime_monitors_total{state}`, `uptime_open_incidents`. Public until the first API token is created; token-gated thereafter and ACL-filtered.
 - Tokens stored as SHA-256 with last-used timestamp tracked; the plaintext token is shown exactly once at creation.
@@ -448,7 +448,27 @@ curl -s -X PATCH .../api/v1/sites/123 -d '{"interval_seconds": 120, "failure_thr
 curl -s -X PATCH .../api/v1/sites/123 -d '{"channel_ids": [4, 7]}'
 ```
 
-Validation is strict — unknown enum values, missing required fields per monitor type, and malformed `request_headers` all return **400 {"error","details":[…]}**. Tokens inherit the creator's ACL — a viewer's token can only read monitors they have access to, write actions require both the `write` scope **and** `manage` permission on the target monitor, and `POST /api/v1/sites` additionally requires `admin` or `editor` role.
+### Tags via API
+
+`GET /api/v1/tags` lists tags (read scope). Create, update, and delete require **write** scope and **admin** role (same as Settings → Tags). `POST` is idempotent: creating an existing name returns **200** with the tag.
+
+```bash
+# List tags (read)
+curl -s -H "Authorization: Bearer $TOKEN" https://uptime.example.com/api/v1/tags | jq
+
+# Create tag (write + admin) — 201, or 200 if name already exists
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X POST https://uptime.example.com/api/v1/tags -d '{"name":"production","color":"green"}'
+
+# Update tag
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X PATCH https://uptime.example.com/api/v1/tags/3 -d '{"color":"blue"}'
+
+# Delete tag
+curl -s -H "Authorization: Bearer $TOKEN" -X DELETE https://uptime.example.com/api/v1/tags/3
+```
+
+Validation is strict — unknown enum values, missing required fields per monitor type, and malformed `request_headers` all return **400 {"error","details":[…]}**. Tokens inherit the creator's ACL — a viewer's token can only read monitors they have access to, write actions require both the `write` scope **and** `manage` permission on the target monitor, and `POST /api/v1/sites` additionally requires `admin` or `editor` role. Tag write endpoints require **admin** role.
 
 Scrape config for Prometheus:
 

@@ -139,6 +139,8 @@ Dashboard: filter pills for TCP / Ping / DNS, type-aware meta line on every card
   - `GET /api/v1/incidents?limit=` (read)
   - `GET /api/v1/tags` (read)
   - `GET /api/v1/stats` (read)
+  - `POST /api/v1/tags` | `PATCH /api/v1/tags/:id` | `DELETE /api/v1/tags/:id` (write; admin role)
+  - `POST /api/v1/sites` | `PATCH /api/v1/sites/:id` (write; admin or editor)
   - `POST /api/v1/sites/:id/pause` | `/resume` | `/check-now` (write)
   - `DELETE /api/v1/sites/:id` (write)
 - Read tokens are denied on write endpoints with HTTP 403.

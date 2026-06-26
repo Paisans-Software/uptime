@@ -413,9 +413,33 @@ grep -q '"total"' <<<"$API_STATS" || fail "GET /api/v1/stats missing 'total'"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $ENV_TOKEN" "$BASE/api/v1/sites/$TCP_ID/resume")"  = "200" ]] || fail "API resume"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $ENV_TOKEN" "$BASE/api/v1/sites/$TCP_ID/check-now")" = "200" ]] || fail "API check-now"
 
+# Tags API (admin write token)
+TAG_CREATE=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $ENV_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ft-smoke-tag","color":"blue"}' "$BASE/api/v1/tags")
+TAG_CREATE_BODY=$(sed '$d' <<<"$TAG_CREATE")
+TAG_CREATE_CODE=$(tail -n1 <<<"$TAG_CREATE")
+[[ "$TAG_CREATE_CODE" = "201" ]] || fail "POST /api/v1/tags should 201 (got $TAG_CREATE_CODE)"
+grep -q '"name":"ft-smoke-tag"' <<<"$TAG_CREATE_BODY" || fail "POST /api/v1/tags missing name"
+TAG_ID=$(grep -oE '"id":[0-9]+' <<<"$TAG_CREATE_BODY" | head -1 | grep -oE '[0-9]+')
+[[ -n "$TAG_ID" ]] || fail "POST /api/v1/tags missing id"
+
+TAG_DUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $ENV_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ft-smoke-tag"}' "$BASE/api/v1/tags")
+[[ "$TAG_DUP_CODE" = "200" ]] || fail "duplicate POST /api/v1/tags should 200 (got $TAG_DUP_CODE)"
+
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H "Authorization: Bearer $ENV_TOKEN" -H "Content-Type: application/json" \
+  -d '{"color":"green"}' "$BASE/api/v1/tags/$TAG_ID")" = "200" ]] || fail "PATCH /api/v1/tags"
+
+API_TAGS=$(curl -s -H "Authorization: Bearer $ENV_TOKEN" "$BASE/api/v1/tags")
+grep -q '"name":"ft-smoke-tag"' <<<"$API_TAGS" || fail "GET /api/v1/tags missing ft-smoke-tag"
+
 # Read-scope token must be 403 on write.
 RO_TOKEN=$(node_run "require('./src/lib/apiTokens').createToken('ft-smoke-ro','read',null).then(r=>{console.log(r.token);process.exit(0)})")
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RO_TOKEN" "$BASE/api/v1/sites/$TCP_ID/pause")" = "403" ]] || fail "read token should 403 on pause"
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $RO_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ft-ro-tag"}' "$BASE/api/v1/tags")" = "403" ]] || fail "read token should 403 on POST /api/v1/tags"
+
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $ENV_TOKEN" "$BASE/api/v1/tags/$TAG_ID")" = "200" ]] || fail "DELETE /api/v1/tags"
 # Bad token → 401.
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer utk_bogus" "$BASE/api/v1/sites")" = "401" ]] || fail "bogus token should 401"
 pass "REST API: read, write, scope enforcement"

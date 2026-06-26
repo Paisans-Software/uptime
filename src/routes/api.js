@@ -77,6 +77,29 @@ async function loadSiteWithAccess(req, res, mode) {
   return site;
 }
 
+function tagToApi(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    site_count: row.site_count != null ? row.site_count : 0,
+  };
+}
+
+async function loadTag(req, res) {
+  const id = parseId(req.params.id);
+  if (id == null) {
+    res.status(404).json({ error: 'not found' });
+    return null;
+  }
+  const row = await tagsLib.getTagListed(id);
+  if (!row) {
+    res.status(404).json({ error: 'not found' });
+    return null;
+  }
+  return row;
+}
+
 function safeJsonParse(s) {
   if (s == null) return null;
   if (typeof s === 'object') return s;
@@ -288,6 +311,127 @@ function jsonError(res, status, message, details) {
   if (details) body.details = details;
   return res.status(status).json(body);
 }
+
+function isUniqueConstraintError(err) {
+  return String(err?.message || '').toLowerCase().includes('unique');
+}
+
+// POST /api/v1/tags — create tag (idempotent when name already exists).
+// Required scope: write. Role: admin (tags are global, same as /settings/tags).
+router.post('/api/v1/tags', requireApi('write'), async (req, res, next) => {
+  try {
+    if (!acl.isAdmin(req.apiUser)) {
+      return jsonError(res, 403, 'role must be admin');
+    }
+    const body = req.body || {};
+    const name = tagsLib.normalizeName(body.name);
+    if (!name) {
+      return jsonError(res, 400, 'tag name required');
+    }
+    const color = Object.prototype.hasOwnProperty.call(body, 'color')
+      ? body.color
+      : undefined;
+
+    const existing = await tagsLib.getTagByName(name);
+    if (existing) {
+      return res.json(tagToApi(existing));
+    }
+
+    try {
+      const id = await tagsLib.createTag(name, color);
+      const row = await tagsLib.getTagListed(id);
+      await audit.record({
+        actor: req.apiUser.username || null,
+        actorUserId: req.apiUser.isEnv ? null : req.apiUser.id,
+        ip: req.ip || null,
+        action: 'tag.created',
+        targetType: 'tag',
+        targetId: id,
+        meta: { name, via: 'api' },
+      });
+      logger.info({ tagId: id, name, via: 'api' }, 'tags.created');
+      return res.status(201).json(tagToApi(row));
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        const row = await tagsLib.getTagByName(name);
+        if (row) return res.json(tagToApi(row));
+      }
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/v1/tags/:id — partial update (name and/or color).
+router.patch('/api/v1/tags/:id', requireApi('write'), async (req, res, next) => {
+  try {
+    if (!acl.isAdmin(req.apiUser)) {
+      return jsonError(res, 403, 'role must be admin');
+    }
+    const existing = await loadTag(req, res);
+    if (!existing) return;
+    const body = req.body || {};
+    const name = Object.prototype.hasOwnProperty.call(body, 'name')
+      ? tagsLib.normalizeName(body.name)
+      : existing.name;
+    if (!name) {
+      return jsonError(res, 400, 'tag name required');
+    }
+    const color = Object.prototype.hasOwnProperty.call(body, 'color')
+      ? body.color
+      : existing.color;
+
+    try {
+      await tagsLib.updateTag(existing.id, name, color);
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        return jsonError(res, 409, 'tag name already exists');
+      }
+      throw err;
+    }
+
+    const row = await tagsLib.getTagListed(existing.id);
+    await audit.record({
+      actor: req.apiUser.username || null,
+      actorUserId: req.apiUser.isEnv ? null : req.apiUser.id,
+      ip: req.ip || null,
+      action: 'tag.updated',
+      targetType: 'tag',
+      targetId: existing.id,
+      meta: { name, via: 'api' },
+    });
+    logger.info({ tagId: existing.id, name, via: 'api' }, 'tags.updated');
+    res.json(tagToApi(row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/tags/:id
+router.delete('/api/v1/tags/:id', requireApi('write'), async (req, res, next) => {
+  try {
+    if (!acl.isAdmin(req.apiUser)) {
+      return jsonError(res, 403, 'role must be admin');
+    }
+    const existing = await loadTag(req, res);
+    if (!existing) return;
+    await tagsLib.deleteTag(existing.id);
+    await audit.record({
+      actor: req.apiUser.username || null,
+      actorUserId: req.apiUser.isEnv ? null : req.apiUser.id,
+      ip: req.ip || null,
+      action: 'tag.deleted',
+      targetType: 'tag',
+      targetId: existing.id,
+      meta: { via: 'api' },
+    });
+    logger.info({ tagId: existing.id, via: 'api' }, 'tags.deleted');
+    res.json({ ok: true, id: existing.id, deleted: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/v1/sites — create monitor of any type.
 // Required scope: write. Role: admin OR editor (env-admin token bypasses).

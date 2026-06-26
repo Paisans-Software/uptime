@@ -30,6 +30,36 @@ async function listTags() {
   `);
 }
 
+async function getTagListed(id) {
+  const rows = await db.query(`
+    SELECT t.id, t.name, t.color,
+           COALESCE(c.cnt, 0) AS site_count
+      FROM tags t
+      LEFT JOIN (
+        SELECT tag_id, COUNT(*) AS cnt FROM site_tags GROUP BY tag_id
+      ) c ON c.tag_id = t.id
+     WHERE t.id = ?
+     LIMIT 1
+  `, [id]);
+  return rows[0] || null;
+}
+
+async function getTagByName(name) {
+  const n = normalizeName(name);
+  if (!n) return null;
+  const rows = await db.query(`
+    SELECT t.id, t.name, t.color,
+           COALESCE(c.cnt, 0) AS site_count
+      FROM tags t
+      LEFT JOIN (
+        SELECT tag_id, COUNT(*) AS cnt FROM site_tags GROUP BY tag_id
+      ) c ON c.tag_id = t.id
+     WHERE t.name = ?
+     LIMIT 1
+  `, [n]);
+  return rows[0] || null;
+}
+
 async function getTag(id) {
   const rows = await db.query(`SELECT * FROM tags WHERE id = ?`, [id]);
   return rows[0] || null;
@@ -126,7 +156,10 @@ async function detachFromSites(siteIds, tagId) {
 module.exports = {
   COLOR_PALETTE,
   normalizeColor,
+  normalizeName,
   listTags,
+  getTagListed,
+  getTagByName,
   getTag,
   createTag,
   updateTag,
