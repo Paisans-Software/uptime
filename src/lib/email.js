@@ -43,7 +43,12 @@ function buildTransport(s) {
 }
 
 function fromAddress(s) {
-  if (s.smtp_from_name) return `"${s.smtp_from_name}" <${s.smtp_from_address}>`;
+  if (s.smtp_from_name) {
+    // Escape backslashes and quotes so a display name containing " or \
+    // can't break out of the quoted-string per RFC 5322.
+    const name = String(s.smtp_from_name).replace(/[\\"]/g, (c) => '\\' + c);
+    return `"${name}" <${s.smtp_from_address}>`;
+  }
   return s.smtp_from_address;
 }
 

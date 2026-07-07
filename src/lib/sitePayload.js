@@ -125,8 +125,11 @@ function buildPayload(body) {
     : null;
 
   const tcp_host = monitor_type === 'tcp' ? (body.tcp_host || '').toString().trim().slice(0, 255) || null : null;
+  // Leave an omitted/invalid port as null so validateForApi can reject it,
+  // rather than silently coercing to port 1.
+  const tcp_port_raw = parseInt(body.tcp_port, 10);
   const tcp_port = monitor_type === 'tcp'
-    ? Math.max(1, Math.min(65535, parseInt(body.tcp_port, 10) || 0))
+    ? (Number.isFinite(tcp_port_raw) && tcp_port_raw >= 1 && tcp_port_raw <= 65535 ? tcp_port_raw : null)
     : null;
 
   const ping_host = monitor_type === 'ping' ? (body.ping_host || '').toString().trim().slice(0, 255) || null : null;
@@ -409,7 +412,7 @@ async function insertSite(data, { channelIds = [], tagIds = [], ownerUserId = nu
 // Update an existing site row. Returns the freshly-loaded row.
 // `channelIds` / `tagIds` are only applied when explicitly provided so
 // PATCH callers can update scalar fields without nuking their channels.
-async function updateSite(id, data, { channelIds, tagIds, ownerUserId, ownerUserIdProvided } = {}) {
+async function updateSite(id, data, { channelIds, tagIds, ownerUserId, ownerUserIdProvided, heartbeatToken } = {}) {
   await db.query(
     `UPDATE sites SET
        name=?, url=?, monitor_type=?, method=?, interval_seconds=?, timeout_ms=?,
@@ -453,15 +456,28 @@ async function updateSite(id, data, { channelIds, tagIds, ownerUserId, ownerUser
   if (data.monitor_type === 'domain') {
     await db.query(`UPDATE sites SET domain_alerted_at_days = NULL WHERE id = ?`, [id]);
   }
-  // Heartbeat token: regenerate only if missing (e.g. monitor was just
-  // converted to heartbeat type).
+  // Heartbeat token handling:
+  //   - if the caller supplied a valid token (e.g. backup restore), adopt it
+  //     unless it collides with another monitor's token;
+  //   - otherwise regenerate only when the current token is missing (e.g. a
+  //     monitor was just converted to the heartbeat type).
   if (data.monitor_type === 'heartbeat') {
-    const cur = await db.query(`SELECT heartbeat_token FROM sites WHERE id=?`, [id]);
-    if (!cur[0]?.heartbeat_token) {
-      await db.query(
-        `UPDATE sites SET heartbeat_token=? WHERE id=?`,
-        [crypto.randomBytes(16).toString('hex'), id]
+    const suppliedValid = typeof heartbeatToken === 'string' && /^[a-f0-9]{16,64}$/i.test(heartbeatToken);
+    if (suppliedValid) {
+      const conflict = await db.query(
+        'SELECT id FROM sites WHERE heartbeat_token = ? AND id <> ? LIMIT 1',
+        [heartbeatToken, id]
       );
+      const token = conflict.length ? crypto.randomBytes(16).toString('hex') : heartbeatToken;
+      await db.query(`UPDATE sites SET heartbeat_token=? WHERE id=?`, [token, id]);
+    } else {
+      const cur = await db.query(`SELECT heartbeat_token FROM sites WHERE id=?`, [id]);
+      if (!cur[0]?.heartbeat_token) {
+        await db.query(
+          `UPDATE sites SET heartbeat_token=? WHERE id=?`,
+          [crypto.randomBytes(16).toString('hex'), id]
+        );
+      }
     }
   }
   if (ownerUserIdProvided) {

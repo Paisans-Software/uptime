@@ -56,4 +56,17 @@
       document.querySelectorAll('.modal.show').forEach(function (m) { close(m); });
     }
   });
+
+  // Safe confirm-on-submit: any form with a `data-confirm` attribute prompts
+  // with that message before submitting. The message is read from the DOM as
+  // text (never evaluated as code), so user-controlled names can't inject JS —
+  // unlike an inline onsubmit="confirm('…<%= name %>…')" handler.
+  document.addEventListener('submit', function (e) {
+    const form = e.target.closest('form[data-confirm]');
+    if (!form) return;
+    const message = form.getAttribute('data-confirm') || 'Are you sure?';
+    if (!window.confirm(message)) {
+      e.preventDefault();
+    }
+  });
 })();

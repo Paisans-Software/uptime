@@ -19,6 +19,31 @@ async function uptimePct(siteId, hours) {
   return (up / total) * 100;
 }
 
+// Batched variant for pages that render many monitors at once (public status
+// page, dashboard): one grouped scan instead of a query per monitor.
+// Returns Map<siteId, pct|null>.
+async function uptimePctForSites(siteIds, hours) {
+  const out = new Map();
+  if (!siteIds || !siteIds.length) return out;
+  const ph = siteIds.map(() => '?').join(',');
+  const rows = await db.query(
+    `SELECT site_id,
+            SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count,
+            SUM(CASE WHEN is_up = 0 THEN 1 ELSE 0 END) AS down_count
+       FROM checks
+      WHERE site_id IN (${ph}) AND checked_at > ${db.intervalAgoSql()} AND is_up IS NOT NULL
+      GROUP BY site_id`,
+    [...siteIds, hours]
+  );
+  for (const r of rows) {
+    const up = Number(r.up_count || 0);
+    const down = Number(r.down_count || 0);
+    const total = up + down;
+    out.set(Number(r.site_id), total ? (up / total) * 100 : null);
+  }
+  return out;
+}
+
 async function responseTimeStats(siteId, hours) {
   const rows = await db.query(
     `SELECT response_time_ms FROM checks
@@ -31,7 +56,11 @@ async function responseTimeStats(siteId, hours) {
   const arr = rows.map((r) => r.response_time_ms);
   const sum = arr.reduce((a, b) => a + b, 0);
   const avg = sum / arr.length;
-  const p = (q) => arr[Math.min(arr.length - 1, Math.floor(arr.length * q))];
+  // Nearest-rank percentile: rank = ceil(q * n), 1-indexed → clamp to [1, n].
+  const p = (q) => {
+    const rank = Math.max(1, Math.min(arr.length, Math.ceil(q * arr.length)));
+    return arr[rank - 1];
+  };
   return {
     count: arr.length,
     min: arr[0],
@@ -109,43 +138,87 @@ async function lastCheck(siteId) {
 // Per-day uptime bucket for the public status page.
 // Returns an array of { date: 'YYYY-MM-DD', total, up, down, uptime_pct }
 // ordered oldest first. Days with no probes get uptime_pct = null.
+//
+// Performance: with N days of minute-level checks this used to scan every
+// row in the window on every page view (hundreds of ms per monitor at 90
+// days). Completed days are immutable, so their aggregates are computed once
+// per UTC day and memoized; only *today's* bucket is queried live. The cache
+// self-invalidates when the UTC date (or requested window) changes.
+const dailyCache = new Map(); // siteId -> { key, byDay: Map<day, agg> }
+
+function aggRow(r) {
+  const up = Number(r.up_count || 0);
+  const down = Number(r.down_count || 0);
+  const total = up + down;
+  return {
+    total,
+    up,
+    down,
+    inconclusive: Number(r.inconclusive_count || 0),
+    uptime_pct: total ? (up / total) * 100 : null,
+  };
+}
+
+function invalidateDailyCache(siteId) {
+  if (siteId == null) dailyCache.clear();
+  else dailyCache.delete(Number(siteId));
+}
+
 async function dailyUptime(siteId, days = 90) {
   const dayExprByDialect = db.dialect === 'sqlite'
     ? `substr(checked_at, 1, 10)`
     : `DATE_FORMAT(checked_at, '%Y-%m-%d')`;
-  const hoursWindow = days * 24;
-  const rows = await db.query(
-    `SELECT ${dayExprByDialect} AS day,
-            SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count,
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const todayIso = today.toISOString().slice(0, 10);
+  // MySQL DATETIME comparisons need a driver-friendly literal; SQLite stores
+  // ISO strings so the same boundary works lexicographically for both.
+  const todayStart = db.dialect === 'sqlite'
+    ? `${todayIso}T00:00:00.000Z`
+    : `${todayIso} 00:00:00`;
+
+  const cacheKey = `${todayIso}:${days}`;
+  let cached = dailyCache.get(Number(siteId));
+  if (!cached || cached.key !== cacheKey) {
+    // (Re)build the immutable part: all completed days in the window.
+    const rows = await db.query(
+      `SELECT ${dayExprByDialect} AS day,
+              SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count,
+              SUM(CASE WHEN is_up = 0 THEN 1 ELSE 0 END) AS down_count,
+              SUM(CASE WHEN is_up IS NULL THEN 1 ELSE 0 END) AS inconclusive_count
+       FROM checks
+       WHERE site_id = ? AND checked_at > ${db.intervalAgoSql()} AND checked_at < ?
+       GROUP BY day
+       ORDER BY day ASC`,
+      [siteId, days * 24, todayStart]
+    );
+    const byDay = new Map();
+    for (const r of rows) byDay.set(r.day, aggRow(r));
+    cached = { key: cacheKey, byDay };
+    dailyCache.set(Number(siteId), cached);
+  }
+
+  // Today's bucket is always queried live — it's a single small index range.
+  const todayRows = await db.query(
+    `SELECT SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count,
             SUM(CASE WHEN is_up = 0 THEN 1 ELSE 0 END) AS down_count,
             SUM(CASE WHEN is_up IS NULL THEN 1 ELSE 0 END) AS inconclusive_count
      FROM checks
-     WHERE site_id = ? AND checked_at > ${db.intervalAgoSql()}
-     GROUP BY day
-     ORDER BY day ASC`,
-    [siteId, hoursWindow]
+     WHERE site_id = ? AND checked_at >= ?`,
+    [siteId, todayStart]
   );
-  const byDay = new Map();
-  for (const r of rows) {
-    const up = Number(r.up_count || 0);
-    const down = Number(r.down_count || 0);
-    const total = up + down;
-    byDay.set(r.day, {
-      total,
-      up,
-      down,
-      inconclusive: Number(r.inconclusive_count || 0),
-      uptime_pct: total ? (up / total) * 100 : null,
-    });
-  }
+  const todayAgg = aggRow(todayRows[0] || {});
+
   const out = [];
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setUTCDate(d.getUTCDate() - i);
     const iso = d.toISOString().slice(0, 10);
-    out.push({ date: iso, ...(byDay.get(iso) || { total: 0, up: 0, down: 0, inconclusive: 0, uptime_pct: null }) });
+    if (iso === todayIso) {
+      out.push({ date: iso, ...todayAgg });
+    } else {
+      out.push({ date: iso, ...(cached.byDay.get(iso) || { total: 0, up: 0, down: 0, inconclusive: 0, uptime_pct: null }) });
+    }
   }
   return out;
 }
@@ -168,6 +241,7 @@ async function recentIncidentsGlobal(limit = 25) {
 
 module.exports = {
   uptimePct,
+  uptimePctForSites,
   responseTimeStats,
   recentChecks,
   recentIncidents,
@@ -176,4 +250,5 @@ module.exports = {
   timeseries,
   lastCheck,
   dailyUptime,
+  invalidateDailyCache,
 };

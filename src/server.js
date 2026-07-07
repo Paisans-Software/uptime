@@ -160,6 +160,10 @@ async function main() {
 
   await monitor.start();
 
+  if (config.sessionSecretGenerated) {
+    logger.warn('SESSION_SECRET is not set — using a random per-boot secret. Sessions will not survive restarts; set SESSION_SECRET in .env for production.');
+  }
+
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, baseUrl: config.publicBaseUrl }, 'http.listening');
   });

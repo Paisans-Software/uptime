@@ -20,7 +20,10 @@ db.pragma('busy_timeout = 5000');
 logger.info({ driver: DIALECT, path: dbPath }, 'db.opened');
 
 function isReadStatement(sql) {
-  return /^\s*(?:WITH\b[\s\S]*?\s+)?SELECT\b|\s*PRAGMA\b|\s*EXPLAIN\b/i.test(sql);
+  // All alternatives anchored to the start — an unanchored `\s*PRAGMA` would
+  // match anywhere in the statement (e.g. inside a string literal) and
+  // misroute a write through .all().
+  return /^\s*(?:(?:WITH\b[\s\S]*?\s+)?SELECT\b|PRAGMA\b|EXPLAIN\b)/i.test(sql);
 }
 
 async function query(sql, params = []) {

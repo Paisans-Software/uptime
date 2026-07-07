@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS checks (
   error_message     TEXT    NULL,
   FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_checks_site_time ON checks (site_id, checked_at);
+-- Covering index: uptime/daily aggregates read (site_id, checked_at, is_up)
+-- only, so the whole scan is answered from the index without row lookups.
+CREATE INDEX IF NOT EXISTS idx_checks_site_time_up ON checks (site_id, checked_at, is_up);
 
 CREATE TABLE IF NOT EXISTS incidents (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,

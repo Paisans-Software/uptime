@@ -169,12 +169,12 @@
                         <i class="ti ti-shield-lock"></i>
                       </a>
                       <form method="post" action="/settings/users/<%= u.id %>/reset-password" class="m-0"
-                            onsubmit="return confirm('Generate a fresh password for <%= u.username %>? They will be forced to change it on next login.');">
+                            data-confirm="Generate a fresh password for <%= u.username %>? They will be forced to change it on next login.">
                         <button type="submit" class="btn btn-sm btn-outline-warning" title="Reset password"><i class="ti ti-refresh"></i></button>
                       </form>
                       <% if (u.totp_enabled) { %>
                         <form method="post" action="/settings/users/<%= u.id %>/disable-2fa" class="m-0"
-                              onsubmit="return confirm('Disable 2FA for <%= u.username %>? They will sign in with password only afterwards.');">
+                              data-confirm="Disable 2FA for <%= u.username %>? They will sign in with password only afterwards.">
                           <button type="submit" class="btn btn-sm btn-outline-warning" title="Disable 2FA"><i class="ti ti-shield-off"></i></button>
                         </form>
                       <% } %>
@@ -185,7 +185,7 @@
                         </button>
                       </form>
                       <form method="post" action="/settings/users/<%= u.id %>/delete" class="m-0"
-                            onsubmit="return confirm('Delete user <%= u.username %>? Their grants and API tokens will be removed; their owned monitors become unowned and only admins will see them.');">
+                            data-confirm="Delete user <%= u.username %>? Their grants and API tokens will be removed; their owned monitors become unowned and only admins will see them.">
                         <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete user"><i class="ti ti-trash"></i></button>
                       </form>
                     </div>

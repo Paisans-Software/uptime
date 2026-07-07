@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS checks (
   status_code       INT NULL,
   response_time_ms  INT UNSIGNED NULL,
   error_message     TEXT NULL,
-  KEY idx_checks_site_time (site_id, checked_at),
+  KEY idx_checks_site_time_up (site_id, checked_at, is_up),
   CONSTRAINT fk_checks_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

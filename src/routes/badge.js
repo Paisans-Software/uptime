@@ -24,10 +24,14 @@ function sendBadge(res, badge, { status = 200 } = {}) {
 async function loadSite(id) {
   if (!Number.isInteger(id) || id <= 0) return null;
   const rows = await db.query(
-    'SELECT id, current_state, paused, monitor_type FROM sites WHERE id = ? LIMIT 1',
+    'SELECT id, current_state, paused, monitor_type, status_page_excluded FROM sites WHERE id = ? LIMIT 1',
     [id]
   );
-  return rows[0] || null;
+  const site = rows[0] || null;
+  // Badges are public, so a monitor hidden from the status page must not leak
+  // its state here either — treat it as if it doesn't exist.
+  if (site && site.status_page_excluded) return null;
+  return site;
 }
 
 router.get('/badge/:id/status.svg', async (req, res) => {

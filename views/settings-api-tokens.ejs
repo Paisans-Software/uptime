@@ -85,7 +85,7 @@
                   <td class="text-secondary small"><%= new Date(t.created_at).toLocaleString() %></td>
                   <td class="text-end">
                     <form method="post" action="/settings/api-tokens/<%= t.id %>/delete" class="m-0"
-                          onsubmit="return confirm('Revoke token &quot;<%= t.name %>&quot;? Any client using it will be denied immediately.');">
+                          data-confirm="Revoke token &quot;<%= t.name %>&quot;? Any client using it will be denied immediately.">
                       <button type="submit" class="btn btn-sm btn-link text-danger"><i class="ti ti-trash"></i></button>
                     </form>
                   </td>

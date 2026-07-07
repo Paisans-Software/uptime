@@ -536,6 +536,24 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
+// Return a shallow copy of `vars` with every value passed through `fn`. Lets
+// us escape interpolated values for a specific wire format (HTML, JSON) while
+// leaving the surrounding template literals (e.g. Telegram <b> tags, JSON
+// punctuation) untouched.
+function escapeVars(vars, fn) {
+  const out = {};
+  for (const [k, v] of Object.entries(vars || {})) out[k] = fn(v);
+  return out;
+}
+
+// Escape a value so it's safe *inside* a JSON string literal (no surrounding
+// quotes). JSON.stringify handles quotes, backslashes, newlines and control
+// characters; we strip the wrapping quotes it adds.
+function jsonEscapeValue(v) {
+  const s = JSON.stringify(v == null ? '' : String(v));
+  return s.slice(1, -1);
+}
+
 function bodyToHtml(body) {
   return escapeHtml(body)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -555,9 +573,19 @@ function buildEmailPayload(event, vars, channel) {
   return { subject, text, html };
 }
 
+// Build the webhook body. When the template is JSON-shaped we interpolate
+// JSON-escaped values so a `"`, `\`, or newline in an error/URL can't break
+// the payload; otherwise we substitute raw. Returns { body, jsonValid }.
 function buildWebhookBody(event, vars, channel) {
   const bodyTpl = pickTemplate(channel, event, 'body') || DEFAULT_WEBHOOK_TEMPLATE;
-  return tpl.render(bodyTpl, vars);
+  const looksJson = /^\s*[[{]/.test(String(bodyTpl));
+  if (looksJson) {
+    const body = tpl.render(bodyTpl, escapeVars(vars, jsonEscapeValue));
+    let jsonValid = true;
+    try { JSON.parse(body); } catch { jsonValid = false; }
+    return { body, jsonValid };
+  }
+  return { body: tpl.render(bodyTpl, vars), jsonValid: true };
 }
 
 async function dispatchToChannel(channel, event, vars, log) {
@@ -589,10 +617,15 @@ async function dispatchToChannel(channel, event, vars, log) {
 
   if (channel.type === 'webhook') {
     if (!cfg.url) { log.warn({ channelId: channel.id }, 'dispatch.webhook_no_url'); return; }
-    const bodyText = buildWebhookBody(event, vars, channel);
-    let jsonValid = true;
-    try { JSON.parse(bodyText); } catch { jsonValid = false; }
+    const { body: bodyText, jsonValid } = buildWebhookBody(event, vars, channel);
     const headers = { 'Content-Type': cfg.content_type || 'application/json', ...(cfg.headers || {}) };
+    const contentType = String(headers['Content-Type'] || '').toLowerCase();
+    // Refuse to send a body that claims to be JSON but isn't — a malformed
+    // payload is worse than a logged failure the operator can see and fix.
+    if (!jsonValid && contentType.includes('json')) {
+      log.error({ channelId: channel.id, event }, 'dispatch.webhook.invalid_json_body');
+      return;
+    }
     if (config.appDebug) {
       log.info({ channelId: channel.id, channelName: channel.name, event, url: cfg.url, method: cfg.method, headers, body: bodyText, jsonValid }, '[webhook:dry-run] APP_DEBUG=true, request NOT sent');
       return;
@@ -654,8 +687,12 @@ async function dispatchToChannel(channel, event, vars, log) {
 
   if (channel.type === 'telegram') {
     if (!cfg.bot_token || !cfg.chat_id) { log.warn({ channelId: channel.id }, 'dispatch.telegram_missing_config'); return; }
-    const title = tpl.render(pickTemplate(channel, event, 'title'), vars);
-    const body  = tpl.render(pickTemplate(channel, event, 'body'),  vars);
+    // parse_mode=HTML: escape interpolated values so &, <, > in URLs/errors
+    // don't produce invalid entities (which Telegram rejects with HTTP 400).
+    // The template's own <b>/<code> tags stay intact.
+    const htmlVars = escapeVars(vars, escapeHtml);
+    const title = tpl.render(pickTemplate(channel, event, 'title'), htmlVars);
+    const body  = tpl.render(pickTemplate(channel, event, 'body'),  htmlVars);
     const text = (title && body) ? `${title}\n\n${body}` : (title || body || '');
     const payload = {
       chat_id: cfg.chat_id,

@@ -30,7 +30,12 @@ const sqliteFile = process.env.SQLITE_PATH
 
 const config = {
   port: toInt(process.env.PORT, 3000),
-  sessionSecret: process.env.SESSION_SECRET || 'dev-secret-please-change',
+  // Falling back to a random per-boot secret (instead of a hardcoded string)
+  // means unset SESSION_SECRET can never be exploited to forge cookies —
+  // the tradeoff is sessions reset on restart, which the boot warning explains.
+  sessionSecret: process.env.SESSION_SECRET
+    || require('crypto').randomBytes(32).toString('hex'),
+  sessionSecretGenerated: !process.env.SESSION_SECRET,
   appDebug: toBool(process.env.APP_DEBUG, false),
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `http://localhost:${toInt(process.env.PORT, 3000)}`,
   db: {
@@ -49,7 +54,12 @@ const config = {
   retention: {
     checksDays: toInt(process.env.CHECKS_RETENTION_DAYS, 90),
     incidentsDays: toInt(process.env.INCIDENTS_RETENTION_DAYS, 365),
-    heartbeatPingsDays: toInt(process.env.HEARTBEAT_RETENTION_DAYS, 30),
+    // README documents HEARTBEAT_PINGS_RETENTION_DAYS; accept the shorter
+    // legacy name too so existing deployments keep working.
+    heartbeatPingsDays: toInt(
+      process.env.HEARTBEAT_PINGS_RETENTION_DAYS ?? process.env.HEARTBEAT_RETENTION_DAYS,
+      30
+    ),
     auditDays: toInt(process.env.AUDIT_RETENTION_DAYS, 180),
     runIntervalHours: toInt(process.env.RETENTION_RUN_INTERVAL_HOURS, 6),
     vacuum: toBool(process.env.RETENTION_VACUUM, true),

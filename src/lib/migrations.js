@@ -613,6 +613,18 @@ async function run() {
   await addColumn('sites', 'renotify_interval_minutes', 'INTEGER NOT NULL DEFAULT 60','INT NOT NULL DEFAULT 60');
   await addColumn('sites', 'last_down_notified_at',     'TEXT NULL',                  'DATETIME(3) NULL');
 
+  // Phase 18 — status page / dashboard query performance.
+  // Replace idx_checks_site_time with a covering index that also includes
+  // is_up: the uptime %, daily-uptime and timeseries aggregates only read
+  // those three columns, so SQLite/MySQL can answer them entirely from the
+  // index instead of doing a row lookup for every check in the window
+  // (~130k rows per monitor at 90 days of minute checks).
+  await addIndex('idx_checks_site_time_up', 'checks', ['site_id', 'checked_at', 'is_up']);
+  if (await indexExists('idx_checks_site_time')) {
+    await db.query('DROP INDEX ' + (db.dialect === 'sqlite' ? 'idx_checks_site_time' : 'idx_checks_site_time ON checks'));
+    logger.info('migrations.dropped_redundant_checks_index');
+  }
+
   // Binary uploads (logo / favicon). Stored inline rather than on disk so
   // backup/import is a single JSON file and there are no FS perms to worry
   // about. One row per `kind` ("logo" | "favicon"). updated_at drives the

@@ -315,7 +315,7 @@ async function startLogin(req, username, password) {
       };
       return { ok: true, needs2fa: true };
     }
-    finalizeEnvLogin(req, cleanUser);
+    await finalizeEnvLogin(req, cleanUser);
     return { ok: true, needs2fa: false };
   }
 
@@ -325,7 +325,22 @@ async function startLogin(req, username, password) {
   return { ok: false, reason: 'bad_credentials', message: 'Invalid username or password' };
 }
 
-function finalizeEnvLogin(req, username) {
+// Swap the session ID at the privilege boundary so a session token captured
+// pre-login (session fixation) is worthless after authentication succeeds.
+function regenerateSession(req) {
+  return new Promise((resolve) => {
+    if (!req.session || typeof req.session.regenerate !== 'function') return resolve();
+    const returnTo = req.session.returnTo;
+    req.session.regenerate((err) => {
+      if (err) logger.warn({ err: err.message }, 'auth.session_regenerate_failed');
+      if (returnTo) req.session.returnTo = returnTo;
+      resolve();
+    });
+  });
+}
+
+async function finalizeEnvLogin(req, username) {
+  await regenerateSession(req);
   rateLimit.recordSuccess(req.ip, username);
   req.session.user = {
     id: null,
@@ -340,6 +355,7 @@ function finalizeEnvLogin(req, username) {
 }
 
 async function finalizeDbLogin(req, dbUser) {
+  await regenerateSession(req);
   rateLimit.recordSuccess(req.ip, dbUser.username);
   req.session.user = {
     id: dbUser.id,
@@ -364,6 +380,10 @@ async function complete2fa(req, code) {
     delete req.session.pendingUser;
     return { ok: false, message: 'Login expired, please sign in again' };
   }
+  // The 2FA step is a second guessing surface; apply the same IP/username
+  // lockout as the password step so codes can't be brute-forced.
+  const lock = rateLimit.checkLocked(req.ip, pending.username);
+  if (lock) return { ok: false, message: lock };
 
   const clean = String(code || '').replace(/\s+/g, '');
   if (!clean) return { ok: false, message: '2FA code required' };
@@ -373,7 +393,7 @@ async function complete2fa(req, code) {
 
   const totpOk = await verifyTotpFromState(state, clean);
   if (totpOk) {
-    if (pending.isEnv) finalizeEnvLogin(req, pending.username);
+    if (pending.isEnv) await finalizeEnvLogin(req, pending.username);
     else {
       const dbUser = await users.getById(pending.userId);
       if (!dbUser || dbUser.disabled) {
@@ -387,7 +407,7 @@ async function complete2fa(req, code) {
 
   const recOk = await consumeRecoveryFromState(state, clean, save);
   if (recOk) {
-    if (pending.isEnv) finalizeEnvLogin(req, pending.username);
+    if (pending.isEnv) await finalizeEnvLogin(req, pending.username);
     else {
       const dbUser = await users.getById(pending.userId);
       if (!dbUser || dbUser.disabled) {

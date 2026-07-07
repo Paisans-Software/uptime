@@ -72,14 +72,19 @@ async function buildStatusData() {
       ORDER BY status_page_order ASC, name ASC`
   );
 
+  const active = sites.filter((s) => !s.paused); // skip paused; they don't reflect real status
+  // One grouped query for all 24h uptimes instead of a scan per monitor.
+  const uptime24Map = await stats.uptimePctForSites(active.map((s) => s.id), 24);
+
   const monitors = [];
-  for (const s of sites) {
-    if (s.paused) continue; // skip paused; they don't reflect real status
-    const [daily, uptime24h, last] = await Promise.all([
+  for (const s of active) {
+    // dailyUptime memoizes completed days per UTC date, so per-view cost is
+    // only today's bucket + last check (both tiny index ranges).
+    const [daily, last] = await Promise.all([
       stats.dailyUptime(s.id, 90),
-      stats.uptimePct(s.id, 24),
       stats.lastCheck(s.id),
     ]);
+    const uptime24h = uptime24Map.get(Number(s.id));
     monitors.push({
       id: s.id,
       name: s.name,

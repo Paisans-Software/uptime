@@ -915,15 +915,24 @@ router.post('/settings/users/:id/grants', async (req, res, next) => {
     if (!target) return res.redirect('/settings/users');
     // Body shape: permissions[<siteId>] = 'none' | 'view' | 'manage'
     const perms = req.body.permissions || {};
+    // Viewers can never manage (acl.canManageSite), so a "manage" grant on a
+    // viewer would be silently dropped at enforcement time. Coerce to "view"
+    // so what's stored matches what's enforced.
+    const isViewerTarget = target.role === 'viewer';
+    let coercedManage = false;
     const entries = [];
     for (const [k, v] of Object.entries(perms)) {
       const sid = parseId(k);
       if (sid == null) continue;
-      const p = String(v || '').toLowerCase();
+      let p = String(v || '').toLowerCase();
+      if (p === 'manage' && isViewerTarget) { p = 'view'; coercedManage = true; }
       if (p === 'view' || p === 'manage') entries.push({ siteId: sid, permission: p });
     }
     await grants.setManyForUser(id, entries, req.session.user?.isEnv ? null : req.session.user?.id || null);
     audit.fromReq(req, 'user.grants_updated', { targetType: 'user', targetId: id, meta: { count: entries.length } });
+    if (coercedManage) {
+      req.flash('warning', `${target.username} is a viewer and cannot manage monitors — those grants were saved as view.`);
+    }
     req.flash('success', `Grants saved for ${target.username}`);
     res.redirect(`/settings/users/${id}/grants`);
   } catch (err) { next(err); }

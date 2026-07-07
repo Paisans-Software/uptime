@@ -93,6 +93,8 @@ async function openIncident(site, error) {
   await db.query(`UPDATE sites SET current_state='down' WHERE id=?`, [site.id]);
 }
 
+// Returns the closed incident's duration in seconds, or null when there was
+// no open incident to close (callers use that to skip the "recovered" alert).
 async function closeOpenIncident(site) {
   const open = await db.query(
     `SELECT id, started_at FROM incidents WHERE site_id=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
@@ -100,7 +102,7 @@ async function closeOpenIncident(site) {
   );
   if (!open.length) {
     await db.query(`UPDATE sites SET current_state='up' WHERE id=?`, [site.id]);
-    return 0;
+    return null;
   }
   const inc = open[0];
   await db.query(
@@ -250,6 +252,18 @@ async function processResult(site, result) {
   // monitors. Failures intentionally don't overwrite stale-but-correct data.
   if (result.cert) {
     await persistCertInfo(site, result.cert);
+    // Cert was renewed (days climbed back above the warn window) — reset the
+    // alert band so the *next* expiry cycle alerts again from the top.
+    const certWarnDays = site.cert_expiry_warn_days == null ? 14 : Number(site.cert_expiry_warn_days);
+    if (result.cert.days_remaining != null
+        && Number(result.cert.days_remaining) > certWarnDays
+        && site.cert_expiry_alerted_at_days != null) {
+      await db.query(
+        `UPDATE sites SET cert_expiry_alerted_at = NULL, cert_expiry_alerted_at_days = NULL WHERE id = ?`,
+        [site.id]
+      );
+      site.cert_expiry_alerted_at_days = null;
+    }
     if (shouldAlertCertExpiry(site, result.cert)) {
       logger.warn({ siteId: site.id, days: result.cert.days_remaining }, 'monitor.cert_expiring_alert');
       await notifier.notifyCertExpiring(site, result.cert);
@@ -261,6 +275,15 @@ async function processResult(site, result) {
   // semantics as cert: fire once per crossing, never spam.
   if (result.domain) {
     await persistDomainInfo(site, result.domain);
+    // Same renewal reset as certs: days back above the warn window clears the
+    // last-alerted band so the next cycle starts fresh.
+    const domainWarnDays = site.domain_expiry_warn_days == null ? 30 : Number(site.domain_expiry_warn_days);
+    if (result.domain.days_remaining != null
+        && Number(result.domain.days_remaining) > domainWarnDays
+        && site.domain_alerted_at_days != null) {
+      await db.query(`UPDATE sites SET domain_alerted_at_days = NULL WHERE id = ?`, [site.id]);
+      site.domain_alerted_at_days = null;
+    }
     if (shouldAlertDomainExpiry(site, result.domain)) {
       logger.warn({ siteId: site.id, days: result.domain.days_remaining }, 'monitor.domain_expiring_alert');
       await notifier.notifyDomainExpiring(site, result.domain);
@@ -295,8 +318,13 @@ async function processResult(site, result) {
     if (s.lastResultIsUp === 0 || site.current_state === 'down') {
       const duration = await closeOpenIncident(site);
       await clearDownNotified(site.id);
-      logger.info({ siteId: site.id, durationSec: duration }, 'monitor.recovered');
-      await notifier.notifyRecovered(site, duration);
+      // Only announce a recovery when an incident actually closed — a stale
+      // in-memory "down" (e.g. failures below threshold, or after a restart)
+      // must not fire a spurious "recovered" alert.
+      if (duration != null) {
+        logger.info({ siteId: site.id, durationSec: duration }, 'monitor.recovered');
+        await notifier.notifyRecovered(site, duration);
+      }
     } else if (site.current_state !== 'up') {
       await db.query(`UPDATE sites SET current_state='up' WHERE id=?`, [site.id]);
     }
@@ -542,11 +570,19 @@ async function watchdogTick() {
       const result = await evaluateHeartbeat(site);
       const s = getState(site.id);
       const lastWasFailure = s.lastResultIsUp === 0;
+      const threshold = Math.max(1, site.failure_threshold || 1);
       if (result.isUp === 0 && !lastWasFailure) {
         await processResult(site, result);
       } else if (result.isUp === 0 && lastWasFailure) {
-        // Still missing its heartbeat — fire a reminder if one is due.
-        await maybeReNotify(site, result.errorMessage);
+        if (s.consecutiveFailures < threshold && site.current_state !== 'down') {
+          // Below the failure threshold: keep feeding failures through
+          // processResult so the counter can actually reach the threshold and
+          // open an incident (previously it stalled at 1 forever).
+          await processResult(site, result);
+        } else {
+          // Still missing its heartbeat — fire a reminder if one is due.
+          await maybeReNotify(site, result.errorMessage);
+        }
       } else if (result.isUp === 1 && s.lastResultIsUp === null) {
         s.lastResultIsUp = 1;
       }

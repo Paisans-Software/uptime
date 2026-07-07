@@ -106,7 +106,7 @@ function safeJsonParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
-function siteToApi(s) {
+function siteToApi(s, { includeToken = false } = {}) {
   return {
     id: s.id,
     name: s.name,
@@ -127,7 +127,9 @@ function siteToApi(s) {
     heartbeat_schedule_kind: s.heartbeat_schedule_kind || null,
     heartbeat_cron: s.heartbeat_cron || null,
     heartbeat_timezone: s.heartbeat_timezone || null,
-    heartbeat_token: s.heartbeat_token || null,
+    // The ping token is a write credential (/ping/:token is unauthenticated),
+    // so only expose it to callers who can manage the monitor.
+    heartbeat_token: includeToken ? (s.heartbeat_token || null) : undefined,
     cloudflare_mode: !!s.cloudflare_mode,
     paused: !!s.paused,
     double_verify: !!s.double_verify,
@@ -183,7 +185,17 @@ router.get('/api/v1/sites', requireApi('read'), async (req, res, next) => {
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const where = [];
     const params = [];
-    if (req.query.state) { where.push('current_state = ?'); params.push(String(req.query.state)); }
+    if (req.query.state) {
+      // "paused" is a separate column, not a current_state value; the other
+      // states only apply to non-paused monitors (matches the web dashboard).
+      const state = String(req.query.state);
+      if (state === 'paused') {
+        where.push('paused = 1');
+      } else {
+        where.push('paused = 0 AND current_state = ?');
+        params.push(state);
+      }
+    }
     if (req.query.monitor_type) { where.push('monitor_type = ?'); params.push(String(req.query.monitor_type)); }
     if (req.query.tag) {
       const t = parseId(req.query.tag);
@@ -199,10 +211,12 @@ router.get('/api/v1/sites', requireApi('read'), async (req, res, next) => {
     const totalRow = await db.query(`SELECT COUNT(*) AS c FROM sites ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`, params);
     const total = totalRow[0]?.c || 0;
     const tagMap = await tagsLib.tagsForSites(rows.map((r) => r.id));
-    res.json({
-      total, limit, offset,
-      data: rows.map((r) => ({ ...siteToApi(r), tags: tagMap.get(r.id) || [] })),
-    });
+    const data = [];
+    for (const r of rows) {
+      const includeToken = await acl.canManageSite(req.apiUser, r);
+      data.push({ ...siteToApi(r, { includeToken }), tags: tagMap.get(r.id) || [] });
+    }
+    res.json({ total, limit, offset, data });
   } catch (err) { next(err); }
 });
 
@@ -211,6 +225,7 @@ router.get('/api/v1/sites/:id', requireApi('read'), async (req, res, next) => {
     const site = await loadSiteWithAccess(req, res, 'see');
     if (!site) return;
     const id = site.id;
+    const includeToken = await acl.canManageSite(req.apiUser, site);
     const [last, up24, up7, up30, incidents, attachedChannels, siteTagRows] = await Promise.all([
       stats.lastCheck(id),
       stats.uptimePct(id, 24),
@@ -221,7 +236,7 @@ router.get('/api/v1/sites/:id', requireApi('read'), async (req, res, next) => {
       tagsLib.listSiteTags(id),
     ]);
     res.json({
-      ...siteToApi(site),
+      ...siteToApi(site, { includeToken }),
       tags: siteTagRows,
       uptime_24h: up24,
       uptime_7d: up7,
@@ -476,7 +491,7 @@ router.post('/api/v1/sites', requireApi('write'), async (req, res, next) => {
     });
     logger.info({ siteId: id, name: data.name, monitor_type: data.monitor_type, via: 'api' }, 'sites.created');
     await monitor.reloadSite(id);
-    res.status(201).json(siteToApi(site));
+    res.status(201).json(siteToApi(site, { includeToken: true }));
   } catch (err) {
     next(err);
   }
@@ -535,7 +550,7 @@ router.patch('/api/v1/sites/:id', requireApi('write'), async (req, res, next) =>
     });
     logger.info({ siteId: existing.id, name: data.name, via: 'api' }, 'sites.updated');
     await monitor.reloadSite(existing.id);
-    res.json(siteToApi(updated));
+    res.json(siteToApi(updated, { includeToken: true }));
   } catch (err) {
     next(err);
   }
@@ -568,6 +583,7 @@ router.delete('/api/v1/sites/:id', requireApi('write'), async (req, res, next) =
     monitor.stopSite(site.id);
     const result = await db.query(`DELETE FROM sites WHERE id=?`, [site.id]);
     await db.query(`DELETE FROM site_grants WHERE site_id=?`, [site.id]);
+    stats.invalidateDailyCache(site.id);
     res.json({ ok: true, id: site.id, deleted: (result.affectedRows ?? result.changes ?? 0) > 0 });
   } catch (err) { next(err); }
 });
@@ -678,7 +694,8 @@ router.get('/metrics', async (req, res, next) => {
 // path *relative* to the mount. Use `req.originalUrl` for the full URL in logs.
 router.use('/api/v1', (err, req, res, _next) => {
   logger.error({ err, reqId: req.id, path: req.originalUrl }, 'api.error');
-  res.status(500).json({ error: 'internal error', detail: err.message });
+  // Don't leak driver/SQL internals to clients — the full error is in the logs.
+  res.status(500).json({ error: 'internal error' });
 });
 
 module.exports = router;

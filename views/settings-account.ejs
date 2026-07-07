@@ -221,7 +221,7 @@
                     <td class="text-secondary small"><%= t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'never' %></td>
                     <td class="text-end">
                       <form method="post" action="/settings/account/tokens/<%= t.id %>/delete" class="m-0"
-                            onsubmit="return confirm('Revoke token &quot;<%= t.name %>&quot;?');">
+                            data-confirm="Revoke token &quot;<%= t.name %>&quot;?">
                         <button type="submit" class="btn btn-sm btn-link text-danger"><i class="ti ti-trash"></i></button>
                       </form>
                     </td>

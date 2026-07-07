@@ -184,7 +184,7 @@
                   <td class="text-secondary small"><%= g.granted_at ? new Date(g.granted_at).toLocaleString() : '' %></td>
                   <td class="text-end">
                     <form method="post" action="/sites/<%= site.id %>/grants/<%= g.user_id %>/delete" class="m-0"
-                          onsubmit="return confirm('Revoke access for <%= g.username %>?');">
+                          data-confirm="Revoke access for <%= g.username %>?">
                       <button type="submit" class="btn btn-sm btn-outline-danger" title="Revoke">
                         <i class="ti ti-trash"></i>
                       </button>
@@ -231,7 +231,7 @@
   </div>
 <% } %>
 
-<% if (site.monitor_type === 'heartbeat' && site.heartbeat_token) { %>
+<% if (site.monitor_type === 'heartbeat' && site.heartbeat_token && typeof canManage !== 'undefined' && canManage) { %>
   <div class="card mb-3 heartbeat-panel">
     <div class="card-body">
       <div class="row align-items-center g-2">

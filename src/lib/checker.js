@@ -577,11 +577,13 @@ async function evaluateHeartbeat(site) {
   );
   const ageSec = rows[0]?.age_seconds;
   if (ageSec == null) {
+    // Never pinged yet — stay inconclusive rather than DOWN, so a freshly
+    // created monitor doesn't page anyone before the cron job is even wired up.
     return {
-      isUp: 0,
+      isUp: null,
       statusCode: null,
       responseTimeMs: null,
-      errorMessage: 'never received a heartbeat',
+      errorMessage: 'waiting for first heartbeat',
       challenged: false,
     };
   }

@@ -57,6 +57,8 @@ async function loadRdapBootstrap() {
       headersTimeout: 8000,
     });
     if (res.statusCode !== 200) {
+      // Drain the body so undici can release the connection back to the pool.
+      await res.body.dump().catch(() => {});
       throw new Error(`bootstrap http ${res.statusCode}`);
     }
     const json = await res.body.json();
@@ -141,10 +143,13 @@ async function tryRdap(domain, timeoutMs) {
     });
     const elapsed = Date.now() - start;
     if (res.statusCode === 404) {
+      await res.body.dump().catch(() => {});
       return { ok: false, source: 'rdap', error: 'domain not found', response_time_ms: elapsed };
     }
     if (res.statusCode !== 200) {
-      // 429 (rate-limit), 5xx → let WHOIS take over.
+      // 429 (rate-limit), 5xx → let WHOIS take over. Drain first so the
+      // connection is released instead of leaking out of the undici pool.
+      await res.body.dump().catch(() => {});
       logger.debug({ statusCode: res.statusCode, url }, 'whois.rdap_bad_status');
       return null;
     }

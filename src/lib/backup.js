@@ -6,6 +6,7 @@ const channels = require('./channels');
 const monitor = require('../monitor');
 const logger = require('../logger');
 const sitePayload = require('./sitePayload');
+const tagsLib = require('./tags');
 
 const BACKUP_VERSION = 1;
 const BACKUP_APP = 'uptime';
@@ -109,10 +110,12 @@ async function exportConfig({ siteIds, includeChannels, includeSmtp, includeSmtp
   const sites = Array.isArray(siteIds) && siteIds.length ? await loadSitesByIds(siteIds) : await loadAllSites();
   const sitesIdsResolved = sites.map((s) => Number(s.id));
   const channelMap = await loadSiteChannelMap(sitesIdsResolved);
+  const tagMap = await tagsLib.tagsForSites(sitesIdsResolved);
 
   const monitorsOut = sites.map((s) => ({
     ...normalizeSiteRow(s),
     channels: channelMap.get(Number(s.id)) || [],
+    tags: (tagMap.get(Number(s.id)) || []).map((t) => t.name),
   }));
 
   const usedChannelNames = new Set();
@@ -199,6 +202,11 @@ function sanitizeImportSite(raw) {
     : [];
   data.channels = channelNames;
 
+  const tagNames = Array.isArray(raw.tags)
+    ? raw.tags.map((s) => String(s || '').trim()).filter(Boolean)
+    : [];
+  data.tags = tagNames;
+
   // Preserve a valid heartbeat token so ping URLs survive a restore.
   data.heartbeat_token = (data.monitor_type === 'heartbeat'
     && typeof raw.heartbeat_token === 'string'
@@ -274,8 +282,32 @@ async function insertSite(data, channelIds) {
 }
 
 async function updateSiteRow(id, data, channelIds) {
-  await sitePayload.updateSite(id, data, { channelIds });
+  // Forward the backup's heartbeat token so a `replace` restore keeps the
+  // monitor's original ping URL instead of silently keeping the old one.
+  await sitePayload.updateSite(id, data, {
+    channelIds,
+    heartbeatToken: data.heartbeat_token || null,
+  });
   return Number(id);
+}
+
+// Resolve tag names to ids, creating any tag that doesn't exist yet, then
+// apply the full set to the site. A backup with no tags leaves them untouched.
+async function applySiteTags(siteId, tagNames) {
+  if (!Array.isArray(tagNames) || !tagNames.length) return;
+  const ids = [];
+  for (const name of tagNames) {
+    const existing = await tagsLib.getTagByName(name);
+    if (existing) { ids.push(Number(existing.id)); continue; }
+    try {
+      const id = await tagsLib.createTag(name);
+      ids.push(Number(id));
+    } catch {
+      const again = await tagsLib.getTagByName(name);
+      if (again) ids.push(Number(again.id));
+    }
+  }
+  await tagsLib.setSiteTags(siteId, ids);
 }
 
 async function importChannels(items, conflict, log) {
@@ -356,17 +388,20 @@ async function importMonitors(items, conflict, nameToChannelId, log) {
       const existing = await findSiteByName(item.name);
       if (!existing) {
         const id = await insertSite(item, channelIds);
+        await applySiteTags(id, item.tags);
         reloadIds.push(id);
         stats.created += 1;
       } else if (conflict === 'skip') {
         stats.skipped += 1;
       } else if (conflict === 'replace') {
         const id = await updateSiteRow(Number(existing.id), item, channelIds);
+        await applySiteTags(id, item.tags);
         reloadIds.push(id);
         stats.updated += 1;
       } else if (conflict === 'rename') {
         const newName = await uniqueSiteName(item.name);
         const id = await insertSite({ ...item, name: newName }, channelIds);
+        await applySiteTags(id, item.tags);
         reloadIds.push(id);
         stats.renamed += 1;
       }
@@ -398,10 +433,12 @@ async function importSmtp(payload, log) {
       if (f === 'smtp_port') v = Number(v) || 587;
       out[f] = v;
     } else {
+      // Field absent from the backup → preserve the current stored value.
+      // (An export without the password simply omits the key.) An explicit
+      // null in the backup is honored above and clears the value.
       out[f] = cur ? cur[f] : null;
     }
   }
-  if (out.smtp_pass == null && cur) out.smtp_pass = cur.smtp_pass || null;
   await db.query(
     `UPDATE settings SET smtp_host=?, smtp_port=?, smtp_secure=?, smtp_user=?, smtp_pass=?, smtp_from_address=?, smtp_from_name=? WHERE id=1`,
     [out.smtp_host, out.smtp_port, out.smtp_secure, out.smtp_user, out.smtp_pass, out.smtp_from_address, out.smtp_from_name]

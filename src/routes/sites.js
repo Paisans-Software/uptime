@@ -14,6 +14,7 @@ const audit = require('../lib/audit');
 const acl = require('../lib/acl');
 const users = require('../lib/users');
 const grants = require('../lib/grants');
+const { safeReturnTo } = require('../auth');
 
 const sitePayload = require('../lib/sitePayload');
 
@@ -283,6 +284,11 @@ router.get('/sites/new', acl.requireRole('admin', 'editor'), async (req, res, ne
 router.post('/sites', acl.requireRole('admin', 'editor'), async (req, res, next) => {
   try {
     const data = buildPayload(req.body);
+    const validationErrors = sitePayload.validateForApi(data, req.body);
+    if (validationErrors.length) {
+      req.flash('error', validationErrors.join('; '));
+      return res.redirect('/sites/new');
+    }
     const channelIds = pickChannelIds(req.body);
     const tagIds = pickTagIds(req.body);
     // Owner: admins may pick; everyone else implicitly owns their own.
@@ -418,6 +424,11 @@ router.post('/sites/:id/edit', acl.requireSiteManage, async (req, res, next) => 
   try {
     const id = req.site.id;
     const data = buildPayload(req.body);
+    const validationErrors = sitePayload.validateForApi(data, req.body);
+    if (validationErrors.length) {
+      req.flash('error', validationErrors.join('; '));
+      return res.redirect(`/sites/${id}/edit`);
+    }
     const channelIds = pickChannelIds(req.body);
     const tagIds = pickTagIds(req.body);
 
@@ -453,6 +464,7 @@ router.post('/sites/:id/delete', acl.requireSiteManage, async (req, res, next) =
     await db.query(`DELETE FROM sites WHERE id=?`, [id]);
     // Tidy up dangling grants (no FK on SQLite).
     await db.query(`DELETE FROM site_grants WHERE site_id=?`, [id]);
+    stats.invalidateDailyCache(id);
     audit.fromReq(req, 'site.deleted', { targetType: 'site', targetId: id });
     logger.info({ siteId: id }, 'sites.deleted');
     req.flash('success', 'Monitor deleted');
@@ -624,7 +636,7 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
       .filter((v) => v != null);
     if (!requestedIds.length) {
       req.flash('warning', 'No monitors selected');
-      return res.redirect(req.body.return_to && req.body.return_to.startsWith('/') ? req.body.return_to : '/');
+      return res.redirect(safeReturnTo(req.body.return_to));
     }
     // Filter to only the sites this user may manage. Skipped ones get
     // reported back in the flash.
@@ -645,7 +657,7 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
     }
     if (!siteIds.length) {
       req.flash('error', 'You do not have permission to act on the selected monitors.');
-      return res.redirect(req.body.return_to && req.body.return_to.startsWith('/') ? req.body.return_to : '/');
+      return res.redirect(safeReturnTo(req.body.return_to));
     }
     const ph = siteIds.map(() => '?').join(',');
 
@@ -657,6 +669,9 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
     } else if (action === 'delete') {
       for (const id of siteIds) monitor.stopSite(id);
       await db.query(`DELETE FROM sites WHERE id IN (${ph})`, siteIds);
+      // Tidy up dangling grants (no FK cascade on SQLite), same as single delete.
+      await db.query(`DELETE FROM site_grants WHERE site_id IN (${ph})`, siteIds);
+      for (const id of siteIds) stats.invalidateDailyCache(id);
       req.flash('success', `Deleted ${siteIds.length} monitor${siteIds.length === 1 ? '' : 's'}`);
     } else if (action === 'tag_add') {
       const tagId = parseId(req.body.tag_id);
@@ -680,7 +695,7 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
     if (skipped > 0) {
       req.flash('warning', `${skipped} monitor${skipped === 1 ? '' : 's'} skipped (no permission)`);
     }
-    res.redirect(req.body.return_to && req.body.return_to.startsWith('/') ? req.body.return_to : '/');
+    res.redirect(safeReturnTo(req.body.return_to));
   } catch (err) {
     next(err);
   }
@@ -715,9 +730,17 @@ router.post('/sites/:id/grants', acl.requireSiteManage, requireSharingAdmin, asy
       req.flash('error', 'Selected user no longer exists.');
       return res.redirect(`/sites/${site.id}`);
     }
-    await grants.set(site.id, userId, permission, req.session.user?.id || null);
-    audit.fromReq(req, 'site.grant_set', { targetType: 'site', targetId: site.id, meta: { user_id: userId, permission } });
-    req.flash('success', `Granted ${permission} to ${target.username}`);
+    // Viewers can never manage (see acl.canManageSite), so a "manage" grant on
+    // a viewer would be silently ignored. Coerce it to "view" and say so,
+    // keeping the stored grant consistent with what's actually enforced.
+    let effectivePermission = permission;
+    if (target.role === 'viewer' && permission === 'manage') {
+      effectivePermission = 'view';
+      req.flash('warning', `${target.username} is a viewer and cannot manage monitors — granted view instead.`);
+    }
+    await grants.set(site.id, userId, effectivePermission, req.session.user?.id || null);
+    audit.fromReq(req, 'site.grant_set', { targetType: 'site', targetId: site.id, meta: { user_id: userId, permission: effectivePermission } });
+    req.flash('success', `Granted ${effectivePermission} to ${target.username}`);
     res.redirect(`/sites/${site.id}`);
   } catch (err) { next(err); }
 });

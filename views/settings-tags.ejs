@@ -47,7 +47,7 @@
       <% tags.forEach(function(t) { %>
         <form method="post" action="/settings/tags/<%= t.id %>/edit" id="tag-form-<%= t.id %>" class="d-none"></form>
         <form method="post" action="/settings/tags/<%= t.id %>/delete" id="tag-del-<%= t.id %>" class="d-none"
-              onsubmit="return confirm('Delete tag &quot;<%= t.name %>&quot;? It will be removed from all monitors.');"></form>
+              data-confirm="Delete tag &quot;<%= t.name %>&quot;? It will be removed from all monitors."></form>
       <% }); %>
 
       <% if (!tags.length) { %>

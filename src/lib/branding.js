@@ -38,6 +38,20 @@ function emptyToNull(v) {
   return s === '' ? null : s;
 }
 
+// Only allow credit URLs that are safe to drop into an href: absolute
+// http(s), protocol-relative, root-relative, or the "#" placeholder.
+// Anything else (notably javascript:/data:) is rejected to null so it can't
+// execute script when a user clicks the footer link.
+function safeCreditUrl(v) {
+  const s = emptyToNull(v);
+  if (s == null) return null;
+  if (s === '#') return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^\/\/[^/\\]/.test(s)) return s;      // protocol-relative //host
+  if (/^\/[^/\\]/.test(s) || s === '/') return s; // root-relative
+  return null;
+}
+
 function defaults() {
   return {
     appName: 'Uptime',
@@ -128,6 +142,9 @@ async function get() {
   }
   // DB > env > default
   const resolved = merge(merge(defaults(), fromEnv()), dbVals);
+  // Neutralize any unsafe credit URL (e.g. javascript:) before it reaches a
+  // template href — covers legacy rows stored before validation existed.
+  resolved.credits.url = safeCreditUrl(resolved.credits.url) || defaults().credits.url;
   // Logo/favicon URLs include `updated_at` of the binary asset so browser
   // caches break on upload without touching assetV.
   const [logoMeta, favMeta] = await Promise.all([
@@ -167,7 +184,7 @@ async function update(values) {
     values.credits == null || values.credits.hide == null ? null : (values.credits.hide ? 1 : 0),
     values.credits && values.credits.lead != null ? String(values.credits.lead) : null,
     emptyToNull(values.credits && values.credits.text),
-    emptyToNull(values.credits && values.credits.url),
+    safeCreditUrl(values.credits && values.credits.url),
   ]);
   invalidate();
 }
