@@ -647,6 +647,16 @@ async function run() {
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
 
+  // Phase 19 — OIDC single sign-on. `oidc_sub` holds the identity provider's
+  // stable subject identifier for users who have signed in via OIDC. Added as a
+  // plain column plus a separate unique index because SQLite cannot add a
+  // UNIQUE column with ALTER TABLE. Multiple NULLs are allowed by both engines.
+  await addColumn('users', 'oidc_sub', 'TEXT NULL', 'VARCHAR(255) NULL');
+  if (!(await indexExists('uq_users_oidc_sub'))) {
+    await db.query('CREATE UNIQUE INDEX uq_users_oidc_sub ON users (oidc_sub)');
+    logger.info({ index: 'uq_users_oidc_sub' }, 'migrations.index_added');
+  }
+
   logger.info('migrations.complete');
 }
 

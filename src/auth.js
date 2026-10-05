@@ -354,7 +354,7 @@ async function finalizeEnvLogin(req, username) {
   audit.fromReq(req, 'login.success', { actor: username, meta: { isEnv: true } });
 }
 
-async function finalizeDbLogin(req, dbUser) {
+async function finalizeDbLogin(req, dbUser, auditMeta) {
   await regenerateSession(req);
   rateLimit.recordSuccess(req.ip, dbUser.username);
   req.session.user = {
@@ -368,7 +368,7 @@ async function finalizeDbLogin(req, dbUser) {
   try { await users.recordLogin(dbUser.id, req.ip); }
   catch (err) { logger.warn({ err: err.message, id: dbUser.id }, 'auth.record_login_failed'); }
   logger.info({ username: dbUser.username, ip: req.ip, role: dbUser.role }, 'auth.login_success');
-  audit.fromReq(req, 'login.success', { actor: dbUser.username });
+  audit.fromReq(req, 'login.success', { actor: dbUser.username, meta: auditMeta });
 }
 
 async function complete2fa(req, code) {
@@ -469,6 +469,7 @@ module.exports = {
   requireAuth,
   safeReturnTo,
   startLogin,
+  finalizeDbLogin,
   complete2fa,
   logout,
   pendingNeeds2fa,

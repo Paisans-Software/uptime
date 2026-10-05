@@ -138,7 +138,7 @@ async function countAdmins() {
   return Number(rows[0]?.c || 0);
 }
 
-async function create({ username, password, role, email = null, displayName = null, mustChangePassword = false, createdByUserId = null }) {
+async function create({ username, password, role, email = null, displayName = null, mustChangePassword = false, createdByUserId = null, oidcSub = null }) {
   const uname = normalizeUsername(username);
   if (!uname || !/^[a-z0-9_.-]{2,64}$/.test(uname)) {
     throw new Error('Username must be 2-64 chars, lowercase letters/digits/._-');
@@ -152,14 +152,15 @@ async function create({ username, password, role, email = null, displayName = nu
   const hash = await hashPassword(password);
   const result = await db.query(
     `INSERT INTO users (username, password_hash, role, email, display_name,
-                        must_change_password, created_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        must_change_password, created_by_user_id, oidc_sub)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       uname, hash, r,
       email ? String(email).trim().slice(0, 255) : null,
       displayName ? String(displayName).trim().slice(0, 120) : null,
       mustChangePassword ? 1 : 0,
       createdByUserId,
+      oidcSub != null ? String(oidcSub) : null,
     ]
   );
   return getById(result.insertId);
@@ -246,6 +247,73 @@ async function claimUnownedSites(userId) {
   return result.affectedRows ?? result.changes ?? 0;
 }
 
+// ─── OIDC helpers ──────────────────────────────────────────────────────
+const USER_COLUMNS = `id, username, password_hash, role, email, display_name,
+            totp_secret, totp_enabled, totp_recovery_codes,
+            disabled, must_change_password,
+            last_login_at, last_login_ip,
+            password_changed_at, created_at, updated_at, created_by_user_id`;
+
+async function findByOidcSub(sub) {
+  if (!sub) return null;
+  const rows = await db.query(
+    `SELECT ${USER_COLUMNS} FROM users WHERE oidc_sub = ? LIMIT 1`,
+    [String(sub)]
+  );
+  return rowToUser(rows[0] || null);
+}
+
+// Users not yet linked to any OIDC identity whose email matches. Callers must
+// only link on a single, unambiguous match with a provider-verified email.
+async function findUnlinkedByEmail(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return [];
+  const rows = await db.query(
+    `SELECT ${USER_COLUMNS} FROM users
+      WHERE oidc_sub IS NULL AND LOWER(email) = ?`,
+    [clean]
+  );
+  return rows.map(rowToUser);
+}
+
+// Links only an account that isn't linked yet. Returns false when another
+// login linked it first, so callers never overwrite an existing link.
+async function linkOidcSub(id, sub) {
+  const result = await db.query(
+    `UPDATE users SET oidc_sub = ?, updated_at = ${db.nowMs()}
+      WHERE id = ? AND oidc_sub IS NULL`,
+    [String(sub), id]
+  );
+  return (result.affectedRows ?? result.changes ?? 0) > 0;
+}
+
+// Turn an IdP-supplied name into something that passes create()'s username
+// rules, then append a numeric suffix until it's free.
+async function availableUsername(raw) {
+  let base = normalizeUsername(raw).replace(/[^a-z0-9_.-]/g, '').slice(0, 56);
+  if (base.length < 2) base = 'user';
+  let candidate = base;
+  for (let i = 2; i < 1000; i++) {
+    if (!isReservedUsername(candidate) && !(await findByUsername(candidate))) return candidate;
+    candidate = `${base}-${i}`;
+  }
+  throw new Error('Could not find a free username');
+}
+
+// Create a DB user backed by an OIDC identity. The password is random and
+// never shown — these accounts sign in through the identity provider.
+async function createOidcUser({ sub, preferredUsername, email, displayName, role }) {
+  const username = await availableUsername(preferredUsername || (email || '').split('@')[0]);
+  return create({
+    username,
+    password: crypto.randomBytes(32).toString('base64'),
+    role,
+    email,
+    displayName,
+    oidcSub: sub,
+  });
+}
+
 // Synthetic "user" object representing the env super-admin. Used wherever an
 // acting user is required but the request came from the .env account.
 function envAdminUser() {
@@ -282,5 +350,9 @@ module.exports = {
   recordLogin,
   deleteUser,
   claimUnownedSites,
+  findByOidcSub,
+  findUnlinkedByEmail,
+  linkOidcSub,
+  createOidcUser,
   envAdminUser,
 };

@@ -51,6 +51,22 @@ const config = {
     user: process.env.ADMIN_USER || 'admin',
     pass: process.env.ADMIN_PASS || 'admin',
   },
+  // Generic OpenID Connect single sign-on (PocketID, Authelia, Authentik,
+  // Keycloak, …). Disabled unless OIDC_ISSUER and OIDC_CLIENT_ID are set.
+  oidc: {
+    enabled: !!(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID),
+    issuer: (process.env.OIDC_ISSUER || '').trim(),
+    clientId: (process.env.OIDC_CLIENT_ID || '').trim(),
+    clientSecret: (process.env.OIDC_CLIENT_SECRET || '').trim(),
+    scopes: (process.env.OIDC_SCOPES || 'openid profile email groups').trim(),
+    buttonLabel: (process.env.OIDC_BUTTON_LABEL || 'Sign in with SSO').trim(),
+    groupsClaim: (process.env.OIDC_GROUPS_CLAIM || 'groups').trim(),
+    adminGroup: (process.env.OIDC_ADMIN_GROUP || '').trim(),
+    editorGroup: (process.env.OIDC_EDITOR_GROUP || '').trim(),
+    defaultRole: (process.env.OIDC_DEFAULT_ROLE || 'viewer').trim().toLowerCase(),
+    autoCreate: toBool(process.env.OIDC_AUTO_CREATE, true),
+    disablePasswordLogin: toBool(process.env.OIDC_DISABLE_PASSWORD_LOGIN, false),
+  },
   retention: {
     checksDays: toInt(process.env.CHECKS_RETENTION_DAYS, 90),
     incidentsDays: toInt(process.env.INCIDENTS_RETENTION_DAYS, 365),
