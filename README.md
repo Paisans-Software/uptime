@@ -306,9 +306,12 @@ Register `${PUBLIC_BASE_URL}/login/oidc/callback` as the redirect URI with your 
 
 How identities map to accounts:
 
-1. A user previously linked to the provider's `sub` signs in as that account.
-2. Otherwise, if the provider marks the email as **verified** and exactly one unlinked local account has that email, the two are linked.
-3. Otherwise a new account is created (if `OIDC_AUTO_CREATE=true`), with a username from `preferred_username` and a random password that is never shown.
+1. A user previously linked to the provider's identity (issuer + `sub`) signs in as that account.
+2. Otherwise a new account is created (if `OIDC_AUTO_CREATE=true`), with a username from `preferred_username`. These accounts are marked as SSO accounts: they can only sign in through the provider, and admins can't reset their password or 2FA.
+
+Accounts are never linked by email. An existing local user connects their account under **My account → Single sign-on → Connect SSO** while signed in; they are sent to the provider to confirm it's them. A connected account can sign in either way and can be disconnected again (unless password sign-in is disabled).
+
+Links are tied to the issuer: if `OIDC_ISSUER` changes, existing links stop matching and users connect again.
 
 Disabled accounts are refused. SSO logins skip the local TOTP step because MFA is the identity provider's job. The `.env` super-admin can never sign in through SSO; it stays a password-only break-glass account.
 
@@ -328,7 +331,7 @@ OIDC_ADMIN_GROUP=uptime-admins
 OIDC_EDITOR_GROUP=uptime-editors
 ```
 
-PocketID reports `email_verified: false` unless email verification is configured, so existing local accounts are **not** linked by email; SSO users get new accounts instead. Unverified emails are never trusted for linking, because users may be able to edit their own email at the provider.
+Existing local users who want to keep their monitors and grants should use **Connect SSO** before their first SSO sign-in; otherwise SSO creates a separate account for them.
 
 ---
 

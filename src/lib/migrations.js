@@ -647,14 +647,23 @@ async function run() {
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
 
-  // Phase 19 — OIDC single sign-on. `oidc_sub` holds the identity provider's
-  // stable subject identifier for users who have signed in via OIDC. Added as a
-  // plain column plus a separate unique index because SQLite cannot add a
-  // UNIQUE column with ALTER TABLE. Multiple NULLs are allowed by both engines.
-  await addColumn('users', 'oidc_sub', 'TEXT NULL', 'VARCHAR(255) NULL');
-  if (!(await indexExists('uq_users_oidc_sub'))) {
-    await db.query('CREATE UNIQUE INDEX uq_users_oidc_sub ON users (oidc_sub)');
-    logger.info({ index: 'uq_users_oidc_sub' }, 'migrations.index_added');
+  // Phase 19 — OIDC single sign-on. `oidc_iss` + `oidc_sub` identify the
+  // provider account linked to a user; `sub` is only unique per issuer, so the
+  // pair is the key. Subjects are case-sensitive ASCII (OIDC Core §5.1), so
+  // MySQL gets binary collations instead of the case-insensitive default.
+  // Added as plain columns plus a separate unique index because SQLite cannot
+  // add a UNIQUE column with ALTER TABLE. Multiple NULLs are allowed by both
+  // engines. `auth_source` marks accounts created by SSO ('oidc'), which never
+  // sign in with a password.
+  await addColumn('users', 'oidc_iss', 'TEXT NULL',
+    'VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL');
+  await addColumn('users', 'oidc_sub', 'TEXT NULL',
+    'VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NULL');
+  await addColumn('users', 'auth_source', "TEXT NOT NULL DEFAULT 'local'",
+    "VARCHAR(16) NOT NULL DEFAULT 'local'");
+  if (!(await indexExists('uq_users_oidc_identity'))) {
+    await db.query('CREATE UNIQUE INDEX uq_users_oidc_identity ON users (oidc_iss, oidc_sub)');
+    logger.info({ index: 'uq_users_oidc_identity' }, 'migrations.index_added');
   }
 
   logger.info('migrations.complete');

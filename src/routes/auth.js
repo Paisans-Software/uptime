@@ -76,6 +76,13 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
   if (req.query.error) {
     logger.warn({ error: req.query.error }, 'oidc.provider_error');
     req.flash('error', 'Sign-in was cancelled or refused by the identity provider');
+    return res.redirect(pending.mode === 'link' ? '/settings/account' : '/login');
+  }
+  const linking = pending.mode === 'link';
+  const failPath = linking ? '/settings/account' : '/login';
+  if (linking && req.session?.user?.id !== pending.userId) {
+    // Session ended or changed between "Connect SSO" and the callback.
+    req.flash('error', 'Sign in again to connect single sign-on');
     return res.redirect('/login');
   }
   let claims;
@@ -83,9 +90,23 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
     claims = await oidc.finishLogin(req.originalUrl, pending);
   } catch (err) {
     logger.warn({ err: err.message, error: err.error, description: err.error_description, ip: req.ip }, 'oidc.callback_failed');
-    audit.fromReq(req, 'login.failed', { actor: 'oidc', meta: { reason: 'oidc_validation' } });
+    if (!linking) audit.fromReq(req, 'login.failed', { actor: 'oidc', meta: { reason: 'oidc_validation' } });
     req.flash('error', 'Single sign-on failed, please try again');
-    return res.redirect('/login');
+    return res.redirect(failPath);
+  }
+  if (linking) {
+    try {
+      const { error } = await oidc.linkUser(pending.userId, claims);
+      if (error) {
+        req.flash('error', error);
+        return res.redirect(failPath);
+      }
+      audit.fromReq(req, 'account.sso_connected');
+      req.flash('success', 'Single sign-on connected. You can now sign in with it.');
+      return res.redirect('/settings/account');
+    } catch (err) {
+      return next(err);
+    }
   }
   try {
     const { user, error, how } = await oidc.resolveUser(claims);

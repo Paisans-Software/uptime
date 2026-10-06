@@ -281,6 +281,14 @@ async function startLogin(req, username, password) {
       audit.fromReq(req, 'login.failed', { actor: cleanUser, meta: { reason: 'disabled' } });
       return { ok: false, reason: 'disabled', message: 'Account is disabled' };
     }
+    // Accounts created by SSO have no usable password, whatever is stored.
+    // Same message as a bad password so usernames aren't confirmed.
+    if (dbUser.auth_source === 'oidc') {
+      rateLimit.recordFailure(req.ip, cleanUser);
+      logger.warn({ username: cleanUser, ip: req.ip }, 'auth.login_sso_only');
+      audit.fromReq(req, 'login.failed', { actor: cleanUser, meta: { reason: 'sso_only' } });
+      return { ok: false, reason: 'bad_credentials', message: 'Invalid username or password' };
+    }
     const ok = await users.verifyPassword(dbUser.password_hash, password);
     if (!ok) {
       rateLimit.recordFailure(req.ip, cleanUser);
@@ -363,6 +371,7 @@ async function finalizeDbLogin(req, dbUser, auditMeta) {
     username: dbUser.username,
     role: dbUser.role,
     mustChangePassword: !!dbUser.must_change_password,
+    authSource: dbUser.auth_source || 'local',
   };
   delete req.session.pendingUser;
   try { await users.recordLogin(dbUser.id, req.ip); }
@@ -447,6 +456,7 @@ async function loadFreshSessionUser(req) {
     username: fresh.username,
     role: fresh.role,
     mustChangePassword: !!fresh.must_change_password,
+    authSource: fresh.auth_source || 'local',
   };
 }
 
