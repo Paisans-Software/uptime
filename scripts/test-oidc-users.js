@@ -24,7 +24,7 @@ Object.assign(process.env, {
   OIDC_CLIENT_ID: 'test',
   OIDC_ADMIN_GROUP: 'uptime-admins',
   OIDC_EDITOR_GROUP: 'uptime-editors',
-  OIDC_DEFAULT_ROLE: 'viewer',
+  OIDC_VIEWER_GROUP: '*',
   OIDC_AUTO_CREATE: 'true',
 });
 
@@ -42,6 +42,7 @@ async function main() {
   const id = (sub, extra = {}) => ({ iss: ISS, sub, ...extra });
 
   const bob = await users.create({ username: 'bob', password: 'password123', role: 'viewer', email: 'Bob@Example.com' });
+  const boss = await users.create({ username: 'boss', password: 'password123', role: 'admin' });
 
   // A matching email never links, verified or not: the local email is
   // user-editable, so it proves nothing. SSO gets its own account.
@@ -57,6 +58,31 @@ async function main() {
   assert.strictEqual(r.user.role, 'admin');
   r = await oidc.resolveUser(id('s1', { groups: [] }));
   assert.strictEqual(r.user.role, 'viewer');
+  assert.deepStrictEqual(r.roleChange, { from: 'admin', to: 'viewer' });
+
+  // The last active DB admin is never demoted by group sync.
+  await users.updateRole(boss.id, 'viewer');
+  r = await oidc.resolveUser(id('s1', { groups: ['uptime-admins'] }));
+  assert.strictEqual(r.user.role, 'admin');
+  r = await oidc.resolveUser(id('s1', { groups: [] }));
+  assert.strictEqual(r.user.role, 'admin');
+  assert.strictEqual(r.roleChange, null);
+  await users.updateRole(boss.id, 'admin');
+
+  // Without a wildcard, users in no configured group are refused, new or not.
+  config.oidc.viewerGroup = 'uptime-viewers';
+  r = await oidc.resolveUser(id('s1', { groups: ['other'] }));
+  assert.ok(r.error && r.denied);
+  r = await oidc.resolveUser(id('brand-new', { groups: [] }));
+  assert.ok(r.error && r.denied);
+  assert.strictEqual(await users.findByOidcIdentity(ISS, 'brand-new'), null);
+  r = await oidc.resolveUser(id('s1', { groups: ['uptime-viewers'] }));
+  assert.strictEqual(r.user.role, 'viewer');
+  // Group names with spaces in a comma-separated string claim.
+  config.oidc.adminGroup = 'Uptime Admins';
+  assert.strictEqual(oidc.roleFromClaims({ groups: 'Uptime Admins, other' }), 'admin');
+  config.oidc.adminGroup = 'uptime-admins';
+  config.oidc.viewerGroup = '*';
 
   // The same subject from another issuer is a different identity.
   r = await oidc.resolveUser({ iss: 'https://other.example.test', sub: 's1', preferred_username: 'bob' });
@@ -110,8 +136,15 @@ async function main() {
   assert.ok((await oidc.resolveUser({})).error);
   assert.ok((await oidc.resolveUser({ sub: 'no-iss' })).error);
 
-  // Space- or comma-separated string groups claim.
-  assert.deepStrictEqual(oidc.groupsFromClaims({ groups: 'a, b c' }), ['a', 'b', 'c']);
+  // Comma-separated string groups claim; spaces belong to the name.
+  assert.deepStrictEqual(oidc.groupsFromClaims({ groups: 'a, b c' }), ['a', 'b c']);
+
+  // Startup check refuses a config where nobody could sign in.
+  const saved = { ...config.oidc };
+  Object.assign(config.oidc, { adminGroup: '', editorGroup: '', viewerGroup: '' });
+  assert.throws(() => oidc.checkConfig(), /OIDC_VIEWER_GROUP/);
+  Object.assign(config.oidc, saved);
+  oidc.checkConfig();
 
   // Parallel first logins for one identity yield a single account.
   const [p1, p2] = await Promise.all([

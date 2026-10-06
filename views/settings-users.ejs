@@ -148,6 +148,10 @@
                     </div>
                   </td>
                   <td>
+                    <% if (oidcEnabled && u.oidc_linked) { %>
+                      <span class="badge bg-secondary-lt"><%= u.role %></span>
+                      <div class="text-secondary small">managed by SSO</div>
+                    <% } else { %>
                     <form method="post" action="/settings/users/<%= u.id %>/role" class="m-0 d-flex gap-2 align-items-center">
                       <select name="role" class="form-select form-select-sm w-auto">
                         <option value="viewer"<%= u.role === 'viewer' ? ' selected' : '' %>>viewer</option>
@@ -156,6 +160,7 @@
                       </select>
                       <button type="submit" class="btn btn-sm btn-outline-primary"><i class="ti ti-check"></i></button>
                     </form>
+                    <% } %>
                   </td>
                   <td>
                     <% if (u.totp_enabled) { %>
