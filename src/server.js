@@ -15,6 +15,7 @@ const monitor = require('./monitor');
 const { sessionMiddleware, requireAuth, loadFreshSessionUser } = require('./auth');
 
 async function main() {
+  require('./lib/oidc').checkConfig();
   await db.ensureSchema();
   await require('./lib/migrations').run();
   require('./lib/retention').schedule();

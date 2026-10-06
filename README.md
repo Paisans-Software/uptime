@@ -296,13 +296,16 @@ Any OpenID Connect provider works (PocketID, Authelia, Authentik, Keycloak, …)
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | _(unset)_ | Client credentials. Leave the secret empty for a public (PKCE-only) client. |
 | `OIDC_SCOPES` | `openid profile email groups` | Requested scopes. |
 | `OIDC_BUTTON_LABEL` | `Sign in with SSO` | Text on the login button. |
-| `OIDC_GROUPS_CLAIM` | `groups` | Claim holding the user's groups (array or space/comma-separated string). |
-| `OIDC_ADMIN_GROUP` / `OIDC_EDITOR_GROUP` | _(unset)_ | Group names that map to the `admin` / `editor` roles. When either is set, the role is re-synced on every SSO login. |
-| `OIDC_DEFAULT_ROLE` | `viewer` | Role for users in neither group. |
+| `OIDC_GROUPS_CLAIM` | `groups` | Claim holding the user's groups (array, or comma-separated string). |
+| `OIDC_ADMIN_GROUP` / `OIDC_EDITOR_GROUP` / `OIDC_VIEWER_GROUP` | _(unset)_ | Group that grants each role: a group name, `*` for any user the provider authenticates, or empty/`none` to never grant that role through SSO. At least one is required. |
 | `OIDC_AUTO_CREATE` | `true` | Create a local account on first SSO login. When `false`, only accounts that are already linked can sign in. |
 | `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Hide the password form. The `.env` super-admin can still sign in at `/login?local=1`. |
 
 Register `${PUBLIC_BASE_URL}/login/oidc/callback` as the redirect URI with your provider. `PUBLIC_BASE_URL` must be the external URL users reach the app on.
+
+Access is decided by groups on every SSO login. The highest role whose group matches wins, and the account's role is updated to match (shown as "managed by SSO" on the users page). Users in no configured group are refused, including existing accounts whose groups were removed at the provider. The last active admin account is never demoted by a group change; a warning is logged instead.
+
+For providers without groups (e.g. Google), use `*`. For example, `OIDC_VIEWER_GROUP=*` with `OIDC_ADMIN_GROUP=uptime-admins` lets everyone in as a viewer and members of `uptime-admins` as admins. `*` lets in **anyone** who can sign in at the provider, so only use it with a provider whose users you trust; a warning is logged at startup. In `docker-compose.yml`, quote it (`OIDC_VIEWER_GROUP: "*"`), since a bare `*` is YAML syntax.
 
 How identities map to accounts:
 
@@ -318,7 +321,7 @@ Disabled accounts are refused. SSO logins skip the local TOTP step because MFA i
 **PocketID example**
 
 1. In PocketID, go to **Administration → OIDC Clients → Add OIDC Client**. Set the callback URL to `https://uptime.example.com/login/oidc/callback` and enable PKCE. Copy the client ID and secret.
-2. Optionally, create user groups `uptime-admins` / `uptime-editors` and add users. If you use **Allowed User Groups** on the client, those groups also control who can sign in.
+2. Create user groups `uptime-admins` / `uptime-editors` / `uptime-viewers` and add users. If you use **Allowed User Groups** on the client, those groups also control who can sign in.
 3. Add the settings to `.env` and restart:
 
 ```env
@@ -329,6 +332,7 @@ OIDC_CLIENT_SECRET=<client secret>
 OIDC_BUTTON_LABEL=Sign in with PocketID
 OIDC_ADMIN_GROUP=uptime-admins
 OIDC_EDITOR_GROUP=uptime-editors
+OIDC_VIEWER_GROUP=uptime-viewers
 ```
 
 Existing local users who want to keep their monitors and grants should use **Connect SSO** before their first SSO sign-in; otherwise SSO creates a separate account for them.

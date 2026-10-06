@@ -109,11 +109,14 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
     }
   }
   try {
-    const { user, error, how } = await oidc.resolveUser(claims);
+    const { user, error, how, denied, roleChange } = await oidc.resolveUser(claims);
     if (error) {
-      audit.fromReq(req, 'login.failed', { actor: String(claims.preferred_username || claims.sub), meta: { reason: 'oidc_no_user' } });
+      audit.fromReq(req, 'login.failed', { actor: String(claims.preferred_username || claims.sub), meta: { reason: denied ? 'oidc_no_group' : 'oidc_no_user' } });
       req.flash('error', error);
       return res.redirect('/login');
+    }
+    if (roleChange) {
+      audit.fromReq(req, 'user.role_changed', { actor: 'oidc', targetType: 'user', targetId: user.id, meta: { ...roleChange, source: 'oidc' } });
     }
     if (user.disabled) {
       logger.warn({ username: user.username, ip: req.ip }, 'auth.login_disabled');

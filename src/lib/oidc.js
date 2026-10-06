@@ -13,8 +13,10 @@
 // anything, so a matching address proves nothing. Existing local users link
 // their account themselves with "Connect SSO" while signed in (linkUser).
 //
-// Roles come from the groups claim when OIDC_ADMIN_GROUP / OIDC_EDITOR_GROUP
-// are configured and are re-synced on every login. The env super-admin is
+// Access comes only from the groups claim: OIDC_ADMIN_GROUP /
+// OIDC_EDITOR_GROUP / OIDC_VIEWER_GROUP each name a group (or `*` for any
+// authenticated user). The highest matching level wins; no match means no
+// access. Roles are re-synced on every login. The env super-admin is
 // never reachable through OIDC; it stays a password-only break-glass account.
 
 const config = require('../config');
@@ -134,22 +136,43 @@ async function finishLogin(originalUrl, pending) {
   return claims;
 }
 
+// An array claim is used as-is. A string claim is a comma-separated list, so
+// group names may contain spaces ("Uptime Admins").
 function groupsFromClaims(claims) {
   const raw = claims[config.oidc.groupsClaim];
   if (Array.isArray(raw)) return raw.map(String);
-  if (typeof raw === 'string') return raw.split(/[\s,]+/).filter(Boolean);
+  if (typeof raw === 'string') return raw.split(',').map((g) => g.trim()).filter(Boolean);
   return [];
 }
 
-function roleMappingConfigured() {
-  return !!(config.oidc.adminGroup || config.oidc.editorGroup);
-}
+const ROLE_GROUPS = [
+  ['admin', 'adminGroup'],
+  ['editor', 'editorGroup'],
+  ['viewer', 'viewerGroup'],
+];
 
+// Highest role whose configured group matches, or null when none does.
 function roleFromClaims(claims) {
   const groups = groupsFromClaims(claims);
-  if (config.oidc.adminGroup && groups.includes(config.oidc.adminGroup)) return 'admin';
-  if (config.oidc.editorGroup && groups.includes(config.oidc.editorGroup)) return 'editor';
-  return users.validateRole(config.oidc.defaultRole);
+  for (const [role, key] of ROLE_GROUPS) {
+    const group = config.oidc[key];
+    if (group && (group === '*' || groups.includes(group))) return role;
+  }
+  return null;
+}
+
+// Startup check. Throws for configurations that cannot work; warns for ones
+// that are valid but risky.
+function checkConfig() {
+  if (!config.oidc.enabled) return;
+  if (!ROLE_GROUPS.some(([, key]) => config.oidc[key])) {
+    throw new Error('OIDC is enabled but OIDC_ADMIN_GROUP, OIDC_EDITOR_GROUP and OIDC_VIEWER_GROUP are all unset, so nobody could sign in. Set at least one (use * to allow any authenticated user).');
+  }
+  for (const [role, key] of ROLE_GROUPS) {
+    if (config.oidc[key] === '*') {
+      logger.warn({ role }, `oidc.wildcard_group: every user the identity provider authenticates can sign in as ${role}`);
+    }
+  }
 }
 
 function identityFromClaims(claims) {
@@ -164,6 +187,7 @@ async function resolveUser(claims) {
   const { iss, sub } = identityFromClaims(claims);
   if (!iss || !sub) return { error: 'Identity provider did not return a subject' };
   const role = roleFromClaims(claims);
+  if (!role) return { error: 'Your account is not authorised for Uptime', denied: true };
 
   let user = await users.findByOidcIdentity(iss, sub);
   const how = 'sub';
@@ -193,12 +217,20 @@ async function resolveUser(claims) {
     return { user, how: 'created' };
   }
 
-  if (roleMappingConfigured() && user.role !== role) {
-    await users.updateRole(user.id, role);
-    logger.info({ userId: user.id, from: user.role, to: role }, 'oidc.role_synced');
-    user = await users.getById(user.id);
+  let roleChange = null;
+  if (user.role !== role) {
+    // Never demote the last active DB admin; the provider's groups win
+    // everywhere else.
+    if (user.role === 'admin' && !user.disabled && (await users.countAdmins()) <= 1) {
+      logger.warn({ userId: user.id, username: user.username, to: role }, 'oidc.role_sync_skipped_last_admin');
+    } else {
+      await users.updateRole(user.id, role);
+      roleChange = { from: user.role, to: role };
+      logger.info({ userId: user.id, ...roleChange }, 'oidc.role_synced');
+      user = await users.getById(user.id);
+    }
   }
-  return { user, how };
+  return { user, how, roleChange };
 }
 
 // "Connect SSO": attach a validated identity to the signed-in local user.
@@ -212,6 +244,7 @@ async function linkUser(userId, claims) {
   if (!user || user.disabled) return { error: 'Account is not available' };
   if (user.auth_source !== 'local') return { error: 'This account already signs in with single sign-on' };
   if (user.oidc_linked) return { error: 'This account is already connected to single sign-on' };
+  if (!roleFromClaims(claims)) return { error: 'Your single sign-on account is not authorised for Uptime' };
   const owner = await users.findByOidcIdentity(iss, sub);
   if (owner) return { error: 'This single sign-on identity is already connected to another account' };
   if (!(await users.linkOidcIdentity(userId, iss, sub))) {
@@ -230,4 +263,5 @@ module.exports = {
   linkUser,
   roleFromClaims,
   groupsFromClaims,
+  checkConfig,
 };
