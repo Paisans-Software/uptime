@@ -16,13 +16,24 @@ router.get('/login', async (req, res) => {
     if (await pendingNeeds2fa(req)) return res.redirect('/login/2fa');
     delete req.session.pendingUser;
   }
+  const local = req.query.local === '1';
+  const signedOut = !!req.session?.signedOut;
+  // SSO-only deployments go straight to the provider, so an expired session
+  // costs the user nothing. Not after an explicit sign-out (the provider
+  // would sign them straight back in), not when there's an error to show
+  // (that would loop), and never on the break-glass page.
+  const hasError = (res.locals.flash?.error || []).length > 0;
+  if (config.oidc.enabled && config.oidc.disablePasswordLogin && !local && !signedOut && !hasError) {
+    return res.redirect('/login/oidc');
+  }
   res.render('login', {
     layout: false,
     title: 'Sign in',
+    signedOut,
     oidc: config.oidc.enabled ? { label: config.oidc.buttonLabel } : null,
     // With OIDC_DISABLE_PASSWORD_LOGIN the form is hidden but stays reachable
     // at /login?local=1 so the env super-admin can still break glass.
-    showPasswordForm: !config.oidc.enabled || !config.oidc.disablePasswordLogin || req.query.local === '1',
+    showPasswordForm: !config.oidc.enabled || !config.oidc.disablePasswordLogin || local,
   });
 });
 
@@ -105,15 +116,20 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
       req.flash('success', 'Single sign-on connected. You can now sign in with it.');
       return res.redirect('/settings/account');
     } catch (err) {
-      return next(err);
+      logger.error({ err: err.message, ip: req.ip }, 'oidc.link_failed');
+      req.flash('error', 'Single sign-on failed, please try again');
+      return res.redirect(failPath);
     }
   }
   try {
-    const { user, error, how } = await oidc.resolveUser(claims);
+    const { user, error, how, denied, roleChange } = await oidc.resolveUser(claims);
     if (error) {
-      audit.fromReq(req, 'login.failed', { actor: String(claims.preferred_username || claims.sub), meta: { reason: 'oidc_no_user' } });
+      audit.fromReq(req, 'login.failed', { actor: String(claims.preferred_username || claims.sub), meta: { reason: denied ? 'oidc_no_group' : 'oidc_no_user' } });
       req.flash('error', error);
       return res.redirect('/login');
+    }
+    if (roleChange) {
+      audit.fromReq(req, 'user.role_changed', { actor: 'oidc', targetType: 'user', targetId: user.id, meta: { ...roleChange, source: 'oidc' } });
     }
     if (user.disabled) {
       logger.warn({ username: user.username, ip: req.ip }, 'auth.login_disabled');
@@ -128,7 +144,12 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
     req.flash('success', 'Welcome back!');
     res.redirect(dest);
   } catch (err) {
-    next(err);
+    // e.g. account creation failing on an unusable username. Details go to
+    // the log; the user gets the same message as any other SSO failure.
+    logger.error({ err: err.message, ip: req.ip }, 'oidc.login_failed');
+    audit.fromReq(req, 'login.failed', { actor: 'oidc', meta: { reason: 'oidc_error' } });
+    req.flash('error', 'Single sign-on failed, please try again');
+    res.redirect('/login');
   }
 });
 

@@ -93,6 +93,11 @@ const authenticator = {
   },
 };
 
+// SSO sessions end this long after sign-in, however active, so the user goes
+// back through the provider and group membership is re-checked. Password
+// sessions keep the cookie lifetime below.
+const SSO_SESSION_MAX_MS = 24 * 60 * 60 * 1000;
+
 function sessionMiddleware() {
   return session({
     secret: config.sessionSecret,
@@ -364,7 +369,13 @@ async function finalizeEnvLogin(req, username) {
 
 async function finalizeDbLogin(req, dbUser, auditMeta) {
   await regenerateSession(req);
-  rateLimit.recordSuccess(req.ip, dbUser.username);
+  const sso = auditMeta?.method === 'oidc';
+  if (sso) {
+    rateLimit.recordSuccessUser(dbUser.username);
+    req.session.ssoLoginAt = Date.now();
+  } else {
+    rateLimit.recordSuccess(req.ip, dbUser.username);
+  }
   req.session.user = {
     id: dbUser.id,
     isEnv: false,
@@ -460,13 +471,30 @@ async function loadFreshSessionUser(req) {
   };
 }
 
+// Ends an SSO session older than SSO_SESSION_MAX_MS. The session is replaced
+// rather than destroyed so requireAuth can remember the page for after the
+// (usually invisible) round trip through the provider. Returns true if ended.
+async function endExpiredSsoSession(req) {
+  const at = req.session?.ssoLoginAt;
+  if (!at || Date.now() - at < SSO_SESSION_MAX_MS) return false;
+  logger.info({ username: req.session.user?.username }, 'auth.sso_session_expired');
+  delete req.session.returnTo;
+  await regenerateSession(req);
+  return true;
+}
+
+// The session is replaced (old ID invalidated) with one that only carries
+// `signedOut`, so the login page shows "signed out" instead of sending the
+// user straight back to the provider, which would sign them in again.
 function logout(req) {
   const u = req.session?.user;
   const username = u?.username;
   const actorUserId = u && !u.isEnv ? u.id : null;
   const ip = req.ip;
   return new Promise((resolve) => {
-    req.session.destroy(() => {
+    req.session.regenerate((err) => {
+      if (err) logger.warn({ err: err.message }, 'auth.session_regenerate_failed');
+      else req.session.signedOut = true;
       logger.info({ username }, 'auth.logout');
       if (username) audit.record({ actor: username, actorUserId, ip, action: 'logout' });
       resolve();
@@ -484,6 +512,7 @@ module.exports = {
   logout,
   pendingNeeds2fa,
   loadFreshSessionUser,
+  endExpiredSsoSession,
   // 2FA management — env admin (singleton settings row)
   authenticator,
   getTotpState,

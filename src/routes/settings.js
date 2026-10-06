@@ -749,6 +749,7 @@ router.get('/settings/users', async (req, res, next) => {
       users: list,
       sitesUnowned,
       reservedUsername: config.admin.user,
+      oidcEnabled: config.oidc.enabled,
       newUser: req.session.newUserCreds || null,
     });
     delete req.session.newUserCreds;
@@ -787,6 +788,10 @@ router.post('/settings/users/:id/role', async (req, res, next) => {
     if (id == null) return res.redirect('/settings/users');
     const u = await users.getById(id);
     if (!u) return res.redirect('/settings/users');
+    if (config.oidc.enabled && u.oidc_linked) {
+      req.flash('error', `${u.username}'s role is managed by single sign-on groups.`);
+      return res.redirect('/settings/users');
+    }
     const newRole = String(req.body.role || 'viewer');
     if (u.role === 'admin' && newRole !== 'admin') {
       const adminCount = await users.countAdmins();

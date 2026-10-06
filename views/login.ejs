@@ -31,6 +31,9 @@
       <div class="card card-md">
         <div class="card-body">
           <h2 class="h2 text-center mb-4">Sign in</h2>
+          <% if (typeof signedOut !== 'undefined' && signedOut) { %>
+          <div class="alert alert-info small">You've been signed out.</div>
+          <% } %>
           <% if (typeof oidc !== 'undefined' && oidc) { %>
           <a href="/login/oidc" class="btn btn-primary w-100">
             <i class="ti ti-key me-1"></i> <%= oidc.label %>
