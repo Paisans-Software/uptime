@@ -6,10 +6,12 @@
 // claim validation — is delegated to `openid-client`. This module only maps a
 // validated identity onto a row in the `users` table:
 //
-//   1. a user already linked to this `sub`          → that user
-//   2. exactly one unlinked user with the same,
-//      provider-verified email address              → link `sub`, that user
-//   3. OIDC_AUTO_CREATE (default on)                → new user
+//   1. a user already linked to this (iss, sub)     → that user
+//   2. OIDC_AUTO_CREATE (default on)                → new user
+//
+// Accounts are never linked by email: a local user can set their own email to
+// anything, so a matching address proves nothing. Existing local users link
+// their account themselves with "Connect SSO" while signed in (linkUser).
 //
 // Roles come from the groups claim when OIDC_ADMIN_GROUP / OIDC_EDITOR_GROUP
 // are configured and are re-synced on every login. The env super-admin is
@@ -150,39 +152,30 @@ function roleFromClaims(claims) {
   return users.validateRole(config.oidc.defaultRole);
 }
 
+function identityFromClaims(claims) {
+  const iss = claims.iss ? String(claims.iss) : '';
+  const sub = claims.sub ? String(claims.sub) : '';
+  return { iss, sub };
+}
+
 // Resolve (and if allowed, provision) the DB user for a validated identity.
 // Returns { user } or { error } with a message safe to show on the login page.
 async function resolveUser(claims) {
-  const sub = claims.sub ? String(claims.sub) : '';
-  if (!sub) return { error: 'Identity provider did not return a subject' };
-  const email = typeof claims.email === 'string' ? claims.email.trim() : null;
-  const emailVerified = claims.email_verified === true || claims.email_verified === 'true';
+  const { iss, sub } = identityFromClaims(claims);
+  if (!iss || !sub) return { error: 'Identity provider did not return a subject' };
   const role = roleFromClaims(claims);
 
-  let user = await users.findByOidcSub(sub);
-  let how = 'sub';
-
-  if (!user && email && emailVerified) {
-    const matches = await users.findUnlinkedByEmail(email);
-    if (matches.length === 1) {
-      if (!(await users.linkOidcSub(matches[0].id, sub))) {
-        return { error: 'This account was just linked to another identity; please try again' };
-      }
-      user = matches[0];
-      how = 'email_link';
-      logger.info({ userId: user.id, username: user.username }, 'oidc.user_linked');
-    } else if (matches.length > 1) {
-      logger.warn({ email }, 'oidc.ambiguous_email');
-      return { error: 'More than one account uses this email address; ask an admin to resolve it' };
-    }
-  }
+  let user = await users.findByOidcIdentity(iss, sub);
+  const how = 'sub';
 
   if (!user) {
     if (!config.oidc.autoCreate) {
       return { error: 'No account is linked to this identity' };
     }
+    const email = typeof claims.email === 'string' ? claims.email.trim() : null;
     try {
       user = await users.createOidcUser({
+        iss,
         sub,
         preferredUsername: claims.preferred_username || claims.nickname || claims.name,
         email,
@@ -191,14 +184,13 @@ async function resolveUser(claims) {
       });
     } catch (err) {
       // A concurrent first login for the same identity won the insert
-      // (unique index on oidc_sub, or the same derived username).
-      const existing = await users.findByOidcSub(sub);
+      // (unique index on the identity, or the same derived username).
+      const existing = await users.findByOidcIdentity(iss, sub);
       if (!existing) throw err;
       return { user: existing, how: 'sub' };
     }
-    how = 'created';
     logger.info({ userId: user.id, username: user.username, role }, 'oidc.user_created');
-    return { user, how };
+    return { user, how: 'created' };
   }
 
   if (roleMappingConfigured() && user.role !== role) {
@@ -209,12 +201,33 @@ async function resolveUser(claims) {
   return { user, how };
 }
 
+// "Connect SSO": attach a validated identity to the signed-in local user.
+// Both sides are proven in one session — the user is logged in locally and
+// has just authenticated at the provider — so no email matching is involved.
+// Returns { ok: true } or { error } with a message safe to show.
+async function linkUser(userId, claims) {
+  const { iss, sub } = identityFromClaims(claims);
+  if (!iss || !sub) return { error: 'Identity provider did not return a subject' };
+  const user = await users.getById(userId);
+  if (!user || user.disabled) return { error: 'Account is not available' };
+  if (user.auth_source !== 'local') return { error: 'This account already signs in with single sign-on' };
+  if (user.oidc_linked) return { error: 'This account is already connected to single sign-on' };
+  const owner = await users.findByOidcIdentity(iss, sub);
+  if (owner) return { error: 'This single sign-on identity is already connected to another account' };
+  if (!(await users.linkOidcIdentity(userId, iss, sub))) {
+    return { error: 'This single sign-on identity is already connected to another account' };
+  }
+  logger.info({ userId, username: user.username }, 'oidc.user_linked');
+  return { ok: true };
+}
+
 module.exports = {
   CALLBACK_PATH,
   redirectUri,
   beginLogin,
   finishLogin,
   resolveUser,
+  linkUser,
   roleFromClaims,
   groupsFromClaims,
 };
