@@ -237,6 +237,9 @@ async function resolveUser(claims) {
     return { user, how: 'created' };
   }
 
+  // A disabled account is refused by the caller; leave it untouched.
+  if (user.disabled) return { user, how, roleChange: null };
+
   let roleChange = null;
   if (user.role !== role) {
     // Never demote the last active DB admin; the provider's groups win

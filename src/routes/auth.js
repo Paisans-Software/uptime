@@ -116,7 +116,9 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
       req.flash('success', 'Single sign-on connected. You can now sign in with it.');
       return res.redirect('/settings/account');
     } catch (err) {
-      return next(err);
+      logger.error({ err: err.message, ip: req.ip }, 'oidc.link_failed');
+      req.flash('error', 'Single sign-on failed, please try again');
+      return res.redirect(failPath);
     }
   }
   try {
@@ -142,7 +144,12 @@ router.get(oidc.CALLBACK_PATH, async (req, res, next) => {
     req.flash('success', 'Welcome back!');
     res.redirect(dest);
   } catch (err) {
-    next(err);
+    // e.g. account creation failing on an unusable username. Details go to
+    // the log; the user gets the same message as any other SSO failure.
+    logger.error({ err: err.message, ip: req.ip }, 'oidc.login_failed');
+    audit.fromReq(req, 'login.failed', { actor: 'oidc', meta: { reason: 'oidc_error' } });
+    req.flash('error', 'Single sign-on failed, please try again');
+    res.redirect('/login');
   }
 });
 
