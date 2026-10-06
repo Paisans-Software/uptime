@@ -51,6 +51,7 @@ services:
       OIDC_VIEWER_GROUP: "${OIDC_VIEWER_GROUP:-}"
       OIDC_AUTO_CREATE: "${OIDC_AUTO_CREATE:-true}"
       OIDC_DISABLE_PASSWORD_LOGIN: "${OIDC_DISABLE_PASSWORD_LOGIN:-false}"
+      OIDC_ALLOW_HTTP_ISSUER: "${OIDC_ALLOW_HTTP_ISSUER:-false}"
     volumes:
       - uptime-data:/data
       - uptime-logs:/app/logs

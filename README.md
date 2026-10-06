@@ -299,7 +299,8 @@ Any OpenID Connect provider works (PocketID, Authelia, Authentik, Keycloak, …)
 | `OIDC_GROUPS_CLAIM` | `groups` | Claim holding the user's groups (array, or comma-separated string). |
 | `OIDC_ADMIN_GROUP` / `OIDC_EDITOR_GROUP` / `OIDC_VIEWER_GROUP` | _(unset)_ | Group that grants each role: a group name, `*` for any user the provider authenticates, or empty/`none` to never grant that role through SSO. At least one is required. |
 | `OIDC_AUTO_CREATE` | `true` | Create a local account on first SSO login. When `false`, only accounts that are already linked can sign in. |
-| `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Hide the password form. The `.env` super-admin can still sign in at `/login?local=1`. |
+| `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | SSO-only: the login page sends users straight to the provider, and only the `.env` super-admin can still sign in with a password, at `/login?local=1`. Requires a non-default `ADMIN_PASS`. |
+| `OIDC_ALLOW_HTTP_ISSUER` | `false` | Allow a plain-`http` `OIDC_ISSUER`, e.g. a provider on a Docker-internal network. Without it, an `http` issuer refuses to start, since the authorization code, tokens and client secret would travel unencrypted. |
 
 Register `${PUBLIC_BASE_URL}/login/oidc/callback` as the redirect URI with your provider. `PUBLIC_BASE_URL` must be the external URL users reach the app on.
 
@@ -316,7 +317,7 @@ Accounts are never linked by email. An existing local user connects their accoun
 
 Links are tied to the issuer: if `OIDC_ISSUER` changes, existing links stop matching and users connect again.
 
-Disabled accounts are refused. SSO logins skip the local TOTP step because MFA is the identity provider's job. The `.env` super-admin can never sign in through SSO; it stays a password-only break-glass account.
+Disabled accounts are refused. SSO logins skip the local TOTP step because MFA is the identity provider's job. SSO sessions end 24 hours after sign-in (password sessions last 14 days), so group changes at the provider take effect within a day; with `OIDC_DISABLE_PASSWORD_LOGIN` the round trip back through the provider is usually invisible. Signing out shows a "signed out" page rather than sending you back to the provider. To cut off access immediately, disable the account in Uptime as well: existing sessions and API tokens are not revoked by the provider. The `.env` super-admin can never sign in through SSO; it stays a password-only break-glass account.
 
 **PocketID example**
 

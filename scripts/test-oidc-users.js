@@ -146,6 +146,21 @@ async function main() {
   Object.assign(config.oidc, saved);
   oidc.checkConfig();
 
+  // Plain-http issuers need OIDC_ALLOW_HTTP_ISSUER.
+  config.oidc.issuer = 'http://pocketid:1411';
+  assert.throws(() => oidc.checkConfig(), /OIDC_ALLOW_HTTP_ISSUER/);
+  config.oidc.allowHttpIssuer = true;
+  oidc.checkConfig();
+  Object.assign(config.oidc, saved);
+
+  // Password sign-in disabled requires a non-default ADMIN_PASS.
+  config.oidc.disablePasswordLogin = true;
+  config.admin.passIsDefault = true;
+  assert.throws(() => oidc.checkConfig(), /ADMIN_PASS/);
+  config.admin.passIsDefault = false;
+  oidc.checkConfig();
+  config.oidc.disablePasswordLogin = false;
+
   // Parallel first logins for one identity yield a single account.
   const [p1, p2] = await Promise.all([
     oidc.resolveUser(id('s9', { preferred_username: 'erin' })),
