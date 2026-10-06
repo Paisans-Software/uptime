@@ -12,7 +12,7 @@ const config = require('./config');
 const logger = require('./logger');
 const db = require('./db');
 const monitor = require('./monitor');
-const { sessionMiddleware, requireAuth, loadFreshSessionUser } = require('./auth');
+const { sessionMiddleware, requireAuth, loadFreshSessionUser, endExpiredSsoSession } = require('./auth');
 
 async function main() {
   require('./lib/oidc').checkConfig();
@@ -103,6 +103,7 @@ async function main() {
     if (!req.session?.user) return next();
     if (req.session.user.isEnv) return next();
     try {
+      if (await endExpiredSsoSession(req)) return next();
       const fresh = await loadFreshSessionUser(req);
       if (!fresh) {
         req.session.destroy(() => {});

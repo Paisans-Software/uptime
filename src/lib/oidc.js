@@ -56,8 +56,8 @@ async function serverConfig() {
       const client = await lib();
       const issuer = new URL(config.oidc.issuer);
       const options = {};
-      if (issuer.protocol === 'http:') {
-        logger.warn({ issuer: issuer.href }, 'oidc.insecure_issuer');
+      // checkConfig() refuses http: issuers unless OIDC_ALLOW_HTTP_ISSUER.
+      if (issuer.protocol === 'http:' && config.oidc.allowHttpIssuer) {
         options.execute = [client.allowInsecureRequests];
       }
       const discovered = await client.discovery(issuer, config.oidc.clientId, undefined, client.None(), options);
@@ -165,6 +165,26 @@ function roleFromClaims(claims) {
 // that are valid but risky.
 function checkConfig() {
   if (!config.oidc.enabled) return;
+  let issuer;
+  try { issuer = new URL(config.oidc.issuer); } catch {
+    throw new Error(`OIDC_ISSUER is not a valid URL: ${config.oidc.issuer}`);
+  }
+  if (issuer.protocol === 'http:') {
+    if (!config.oidc.allowHttpIssuer) {
+      throw new Error('OIDC_ISSUER uses plain http, which sends the authorization code, tokens and client secret unencrypted. Use https, or set OIDC_ALLOW_HTTP_ISSUER=true if the provider is on a trusted internal network.');
+    }
+    logger.warn({ issuer: issuer.href }, 'oidc.insecure_issuer: OIDC_ISSUER uses plain http; tokens and the client secret travel unencrypted');
+  } else if (issuer.protocol !== 'https:') {
+    throw new Error(`OIDC_ISSUER must be an https URL: ${config.oidc.issuer}`);
+  }
+  // The env super-admin is the only password login left when password
+  // sign-in is disabled; the default password would make it the weak spot.
+  if (config.admin.passIsDefault) {
+    if (config.oidc.disablePasswordLogin) {
+      throw new Error('OIDC_DISABLE_PASSWORD_LOGIN is set but ADMIN_PASS is unset or "admin". Set a strong ADMIN_PASS for the break-glass account.');
+    }
+    logger.warn('auth.default_admin_password: ADMIN_PASS is unset or "admin"; set a strong password for the env super-admin');
+  }
   if (!ROLE_GROUPS.some(([, key]) => config.oidc[key])) {
     throw new Error('OIDC is enabled but OIDC_ADMIN_GROUP, OIDC_EDITOR_GROUP and OIDC_VIEWER_GROUP are all unset, so nobody could sign in. Set at least one (use * to allow any authenticated user).');
   }

@@ -55,6 +55,7 @@ const config = {
   admin: {
     user: process.env.ADMIN_USER || 'admin',
     pass: process.env.ADMIN_PASS || 'admin',
+    passIsDefault: !process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'admin',
   },
   // Generic OpenID Connect single sign-on (PocketID, Authelia, Authentik,
   // Keycloak, …). Disabled unless OIDC_ISSUER and OIDC_CLIENT_ID are set.
@@ -73,6 +74,9 @@ const config = {
     viewerGroup: oidcGroup(process.env.OIDC_VIEWER_GROUP),
     autoCreate: toBool(process.env.OIDC_AUTO_CREATE, true),
     disablePasswordLogin: toBool(process.env.OIDC_DISABLE_PASSWORD_LOGIN, false),
+    // Plain-http issuers send the code, tokens and client secret unencrypted;
+    // they're refused unless explicitly allowed (e.g. a Docker-internal host).
+    allowHttpIssuer: toBool(process.env.OIDC_ALLOW_HTTP_ISSUER, false),
   },
   retention: {
     checksDays: toInt(process.env.CHECKS_RETENTION_DAYS, 90),

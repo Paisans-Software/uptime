@@ -16,13 +16,24 @@ router.get('/login', async (req, res) => {
     if (await pendingNeeds2fa(req)) return res.redirect('/login/2fa');
     delete req.session.pendingUser;
   }
+  const local = req.query.local === '1';
+  const signedOut = !!req.session?.signedOut;
+  // SSO-only deployments go straight to the provider, so an expired session
+  // costs the user nothing. Not after an explicit sign-out (the provider
+  // would sign them straight back in), not when there's an error to show
+  // (that would loop), and never on the break-glass page.
+  const hasError = (res.locals.flash?.error || []).length > 0;
+  if (config.oidc.enabled && config.oidc.disablePasswordLogin && !local && !signedOut && !hasError) {
+    return res.redirect('/login/oidc');
+  }
   res.render('login', {
     layout: false,
     title: 'Sign in',
+    signedOut,
     oidc: config.oidc.enabled ? { label: config.oidc.buttonLabel } : null,
     // With OIDC_DISABLE_PASSWORD_LOGIN the form is hidden but stays reachable
     // at /login?local=1 so the env super-admin can still break glass.
-    showPasswordForm: !config.oidc.enabled || !config.oidc.disablePasswordLogin || req.query.local === '1',
+    showPasswordForm: !config.oidc.enabled || !config.oidc.disablePasswordLogin || local,
   });
 });
 
