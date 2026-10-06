@@ -136,6 +136,15 @@ async function main() {
   assert.ok((await oidc.resolveUser({})).error);
   assert.ok((await oidc.resolveUser({ sub: 'no-iss' })).error);
 
+  // Disabled accounts are returned unchanged (no role sync) for the caller
+  // to refuse.
+  const dis = await oidc.resolveUser(id('dis', { preferred_username: 'dis' }));
+  await users.setDisabled(dis.user.id, true);
+  r = await oidc.resolveUser(id('dis', { groups: ['uptime-admins'] }));
+  assert.strictEqual(r.user.disabled, true);
+  assert.strictEqual(r.user.role, 'viewer');
+  assert.strictEqual(r.roleChange, null);
+
   // Comma-separated string groups claim; spaces belong to the name.
   assert.deepStrictEqual(oidc.groupsFromClaims({ groups: 'a, b c' }), ['a', 'b c']);
 
