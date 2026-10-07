@@ -78,6 +78,18 @@ async function main() {
   assert.strictEqual((await byName('talk — public')).url, 'https://talk2.example.test/');
   assert.deepStrictEqual((await channels.listSiteChannelIds(talk.id)).sort(), [auto, manual].sort());
 
+  // What an admin does to a managed monitor in the UI (pause it, mute it,
+  // annotate it) is not the file's to undo: a reseed that is silent about a
+  // field keeps the admin's value.
+  await db.query('UPDATE sites SET paused = 1, mute_notifications = 1, notes = ?, display_name = ? WHERE id = ?',
+    ['flapping, see ticket', 'Talk', talk.id]);
+  await seed.applySeedFile(file);
+  const kept = await byName('talk — public');
+  assert.strictEqual(Number(kept.paused), 1);
+  assert.strictEqual(Number(kept.mute_notifications), 1);
+  assert.strictEqual(kept.notes, 'flapping, see ticket');
+  assert.strictEqual(kept.display_name, 'Talk');
+
   // An entry the fork rejects keeps the existing monitor exactly as it was.
   write({ monitors: [
     http('talk — public', 'https://talk2.example.test/'),

@@ -30,6 +30,17 @@ const SETTINGS_FIELDS = [
 ];
 const BOOLEAN_SETTINGS = new Set(['smtp_secure', 'status_page_enabled']);
 
+// Columns an admin sets in the UI rather than the deployment in the file.
+// updateSite writes every column buildPayload produces, and buildPayload
+// fills an absent one with its default, so without this a reseed would
+// unpause, unmute and blank whatever an admin did to a managed monitor. A
+// file that does name one of these still wins.
+const ADMIN_FIELDS = [
+  'paused', 'mute_notifications', 'renotify', 'renotify_interval_minutes',
+  'notes', 'display_name', 'status_page_group', 'status_page_excluded',
+  'status_page_order', 'double_verify',
+];
+
 async function applySettings(settings) {
   const keys = SETTINGS_FIELDS.filter((k) => Object.prototype.hasOwnProperty.call(settings, k));
   if (!keys.length) return [];
@@ -79,6 +90,10 @@ async function reconcileMonitors(monitors) {
     }
     const id = ownedByName.get(data.name);
     if (id) {
+      const [current] = await db.query('SELECT * FROM sites WHERE id = ?', [id]);
+      for (const field of ADMIN_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(raw, field)) data[field] = current[field];
+      }
       // No channelIds and no tagIds: updateSite leaves both as they are.
       await sitePayload.updateSite(id, data, {});
       summary.updated.push(data.name);
