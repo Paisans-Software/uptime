@@ -160,6 +160,8 @@
   const bulkActionInput = document.getElementById('bulk-action');
   const bulkTagInput = document.getElementById('bulk-tag-id');
   const bulkTagSelect = document.getElementById('bulk-tag-select');
+  const bulkChannelInput = document.getElementById('bulk-channel-id');
+  const bulkChannelSelect = document.getElementById('bulk-channel-select');
   const bulkCancel = document.getElementById('bulk-cancel');
 
   if (!bulkToggle || !bulkBar || !bulkForm) return;
@@ -201,6 +203,11 @@
         const tagId = bulkTagSelect && bulkTagSelect.value;
         if (!tagId) { alert('Pick a tag from the dropdown first.'); return; }
         bulkTagInput.value = tagId;
+      }
+      if (action === 'channel_add' || action === 'channel_remove') {
+        const channelId = bulkChannelSelect && bulkChannelSelect.value;
+        if (!channelId) { alert('Pick a channel from the dropdown first.'); return; }
+        bulkChannelInput.value = channelId;
       }
       if (action === 'delete') {
         if (!confirm('Delete ' + ids.length + ' monitor(s)? This cannot be undone.')) return;

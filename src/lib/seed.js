@@ -20,7 +20,7 @@ const sitePayload = require('./sitePayload');
 const tagsLib = require('./tags');
 const channels = require('./channels');
 
-const MANAGED_TAG = 'managed';
+const { MANAGED_TAG } = tagsLib;
 
 // The settings the file may carry, and nothing else: a file that could set
 // any column could change sign in or branding without anyone deciding to.

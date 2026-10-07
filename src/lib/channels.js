@@ -6,6 +6,7 @@ const logger = require('../logger');
 const config = require('../config');
 const tpl = require('./templates');
 const email = require('./email');
+const tagsLib = require('./tags');
 
 const CHANNEL_TYPES = [
   'discord', 'webhook', 'email',
@@ -447,6 +448,7 @@ async function createChannel({ name, type, enabled, config, auto_attach_managed 
     [name, type, enabled ? 1 : 0, JSON.stringify(cfg), auto_attach_managed ? 1 : 0]
   );
   logger.info({ channelId: result.insertId, type, name }, 'channels.created');
+  if (auto_attach_managed) await attachToManaged(result.insertId);
   return result.insertId;
 }
 
@@ -464,7 +466,39 @@ async function updateChannel(id, { name, enabled, config, type, auto_attach_mana
     `UPDATE channels SET name = ?, enabled = ?, config = ${db.castJson()}, auto_attach_managed = ? WHERE id = ?`,
     [name, enabled ? 1 : 0, JSON.stringify(cfg), autoAttach, id]
   );
+  // Switched on now, not merely left on: subscribe to every monitor the seed
+  // already made, once. An admin who then detaches it from some keeps that
+  // choice until the flag is switched off and on again.
+  if (autoAttach && !cur.auto_attach_managed) await attachToManaged(id);
   logger.info({ channelId: id, name }, 'channels.updated');
+}
+
+// Link one channel to many monitors, leaving every other link alone. A link
+// that already exists is kept rather than duplicated.
+async function attachToSites(siteIds, channelId) {
+  for (const siteId of siteIds) {
+    const have = await db.query('SELECT 1 FROM site_channels WHERE site_id = ? AND channel_id = ? LIMIT 1', [siteId, channelId]);
+    if (!have.length) {
+      await db.query('INSERT INTO site_channels (site_id, channel_id) VALUES (?, ?)', [siteId, channelId]);
+    }
+  }
+}
+
+// Unlink one channel from many monitors, leaving every other link alone.
+async function detachFromSites(siteIds, channelId) {
+  if (!siteIds.length) return;
+  const ph = siteIds.map(() => '?').join(',');
+  await db.query(`DELETE FROM site_channels WHERE channel_id = ? AND site_id IN (${ph})`, [channelId, ...siteIds]);
+}
+
+// Attach a channel to every monitor a seed file owns (tagged `managed`).
+async function attachToManaged(channelId) {
+  const rows = await db.query(
+    `SELECT st.site_id FROM site_tags st JOIN tags t ON t.id = st.tag_id WHERE t.name = ?`,
+    [tagsLib.MANAGED_TAG]
+  );
+  await attachToSites(rows.map((r) => Number(r.site_id)), channelId);
+  logger.info({ channelId, count: rows.length }, 'channels.attached_to_managed');
 }
 
 // Channels an admin asked to have attached to every newly seeded monitor.
@@ -929,5 +963,6 @@ module.exports = {
   pickTemplate,
   listChannels, getChannel, createChannel, updateChannel, deleteChannel,
   loadSiteChannels, listSiteChannelIds, setSiteChannels, listAutoAttachChannelIds,
+  attachToSites, detachFromSites, attachToManaged,
   notifySite, testChannel,
 };
