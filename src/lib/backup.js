@@ -474,7 +474,10 @@ async function importConfig(raw, opts = {}) {
     summary.monitors = await importMonitors(raw.monitors, conflict, nameToChannelId, log);
   }
 
-  if (importSmtpFlag && raw.settings) {
+  if (importSmtpFlag && raw.settings && require('./seed').smtpManaged()) {
+    log.warn('backup.smtp_skipped_managed');
+    summary.smtp = { applied: false, error: require('./seed').SMTP_LOCKED_MESSAGE };
+  } else if (importSmtpFlag && raw.settings) {
     try {
       summary.smtp = await importSmtp(raw.settings, log);
     } catch (err) {

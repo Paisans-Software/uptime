@@ -8,7 +8,11 @@
   </div>
 </div>
 
+<% if (typeof smtpLocked !== 'undefined' && smtpLocked) { %>
+  <div class="alert alert-info mb-3"><i class="ti ti-lock me-1"></i> <%= smtpLockedMessage %> Sending a test email still works.</div>
+<% } %>
 <form method="post" action="/settings/smtp" class="card mb-3">
+  <fieldset <%= (typeof smtpLocked !== 'undefined' && smtpLocked) ? 'disabled' : '' %>>
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-8">
@@ -46,6 +50,7 @@
   <div class="card-footer text-end">
     <button type="submit" class="btn btn-primary">Save settings</button>
   </div>
+  </fieldset>
 </form>
 
 <div class="card">

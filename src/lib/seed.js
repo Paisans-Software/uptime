@@ -41,6 +41,17 @@ const ADMIN_FIELDS = [
   'status_page_order', 'double_verify',
 ];
 
+// When a seed file supplies SMTP, the file is where SMTP is decided, and the
+// settings page, its save route and backup import refuse to change it. It is
+// recomputed at every apply, so a file that stops supplying SMTP hands it back
+// to the UI on the next start.
+let managedSmtp = false;
+const SMTP_LOCKED_MESSAGE = "SMTP settings are defined in this server's configuration and can't be changed from the UI.";
+
+function smtpManaged() {
+  return managedSmtp;
+}
+
 async function applySettings(settings) {
   const keys = SETTINGS_FIELDS.filter((k) => Object.prototype.hasOwnProperty.call(settings, k));
   if (!keys.length) return [];
@@ -120,6 +131,7 @@ async function reconcileMonitors(monitors) {
 async function applySeedFile(file) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   const settings = raw.settings ? await applySettings(raw.settings) : [];
+  managedSmtp = settings.some((k) => k.startsWith('smtp_'));
   // Absent means "this file says nothing about monitors", not "none".
   const monitors = Array.isArray(raw.monitors) ? await reconcileMonitors(raw.monitors) : null;
   for (const s of (monitors && monitors.skipped) || []) {
@@ -133,4 +145,4 @@ async function applySeedFile(file) {
   return { settings, monitors };
 }
 
-module.exports = { applySeedFile, applySettings, reconcileMonitors, MANAGED_TAG };
+module.exports = { applySeedFile, applySettings, reconcileMonitors, smtpManaged, SMTP_LOCKED_MESSAGE, MANAGED_TAG };

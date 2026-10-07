@@ -354,8 +354,12 @@ A deployment that generates its own monitors can name a JSON file in `SEED_FILE`
 
 - **Settings** may be any of `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from_address`, `smtp_from_name` and `status_page_enabled`. Only the keys present are written.
 - **Monitors** use the same fields as the REST API. The file owns every monitor tagged `managed`: those are created, updated and deleted to match it. A monitor without that tag is never touched, even when its name matches one in the file.
-- **Channel links on an existing monitor are never changed**, so the subscriptions admins choose survive every restart. A new monitor joins every channel with **Attach to new managed monitors** ticked.
+- **Channel links on an existing monitor are never changed**, so the subscriptions admins choose survive every restart. A new monitor joins every channel with **Attach to new managed monitors** ticked. Switching that flag on also attaches the channel once to every monitor the file already manages; detaching it from some afterwards sticks. The dashboard's bulk bar can attach or detach a channel on any selection of monitors (admins only).
 - An entry the app rejects is skipped with a warning and the monitor already under that name is kept. A file with no `monitors` key changes no monitor. A file that cannot be read stops the boot.
+
+### SMTP set by the seed file is read-only
+
+When the seed file supplies any `smtp_*` setting, SMTP is defined by the server's configuration: **Settings → SMTP** is shown read-only (sending a test email still works), saving it is refused, and backup import skips its SMTP section. A seed file without SMTP settings leaves SMTP editable in the UI. The lock is recomputed at every start.
 
 ### Running as root, and behind a proxy
 
