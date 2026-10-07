@@ -106,7 +106,8 @@ function buildPayload(body) {
     };
   }
 
-  return { name, type, enabled, config };
+  const auto_attach_managed = body.auto_attach_managed === '1' || body.auto_attach_managed === 'on' ? 1 : 0;
+  return { name, type, enabled, config, auto_attach_managed };
 }
 
 router.get('/channels', requireAdmin, async (req, res, next) => {

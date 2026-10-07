@@ -439,27 +439,38 @@ async function getChannel(id) {
   return parseConfig(rows[0] || null);
 }
 
-async function createChannel({ name, type, enabled, config }) {
+async function createChannel({ name, type, enabled, config, auto_attach_managed }) {
   if (!CHANNEL_TYPES.includes(type)) throw new Error('Invalid channel type');
   const cfg = sanitizeConfig(type, config);
   const result = await db.query(
-    `INSERT INTO channels (name, type, enabled, config) VALUES (?, ?, ?, ${db.castJson()})`,
-    [name, type, enabled ? 1 : 0, JSON.stringify(cfg)]
+    `INSERT INTO channels (name, type, enabled, config, auto_attach_managed) VALUES (?, ?, ?, ${db.castJson()}, ?)`,
+    [name, type, enabled ? 1 : 0, JSON.stringify(cfg), auto_attach_managed ? 1 : 0]
   );
   logger.info({ channelId: result.insertId, type, name }, 'channels.created');
   return result.insertId;
 }
 
-async function updateChannel(id, { name, enabled, config, type }) {
+async function updateChannel(id, { name, enabled, config, type, auto_attach_managed }) {
   const cur = await getChannel(id);
   if (!cur) throw new Error('Channel not found');
   const useType = type || cur.type;
   const cfg = sanitizeConfig(useType, config);
+  // undefined keeps the stored value, so callers that predate the flag
+  // (backup import) cannot clear it by not knowing about it.
+  const autoAttach = auto_attach_managed === undefined
+    ? (cur.auto_attach_managed ? 1 : 0)
+    : (auto_attach_managed ? 1 : 0);
   await db.query(
-    `UPDATE channels SET name = ?, enabled = ?, config = ${db.castJson()} WHERE id = ?`,
-    [name, enabled ? 1 : 0, JSON.stringify(cfg), id]
+    `UPDATE channels SET name = ?, enabled = ?, config = ${db.castJson()}, auto_attach_managed = ? WHERE id = ?`,
+    [name, enabled ? 1 : 0, JSON.stringify(cfg), autoAttach, id]
   );
   logger.info({ channelId: id, name }, 'channels.updated');
+}
+
+// Channels an admin asked to have attached to every newly seeded monitor.
+async function listAutoAttachChannelIds() {
+  const rows = await db.query('SELECT id FROM channels WHERE auto_attach_managed = 1 ORDER BY id');
+  return rows.map((r) => Number(r.id));
 }
 
 async function deleteChannel(id) {
@@ -917,6 +928,6 @@ module.exports = {
   emptyTemplates,
   pickTemplate,
   listChannels, getChannel, createChannel, updateChannel, deleteChannel,
-  loadSiteChannels, listSiteChannelIds, setSiteChannels,
+  loadSiteChannels, listSiteChannelIds, setSiteChannels, listAutoAttachChannelIds,
   notifySite, testChannel,
 };
