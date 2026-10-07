@@ -29,7 +29,11 @@ async function main() {
   const app = express();
 
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  // Behind a reverse proxy on another host every request arrives from that
+  // proxy, and the login rate limiter is keyed on req.ip: one client could
+  // lock every admin out. TRUST_PROXY names the proxy's network (Express's
+  // `trust proxy` syntax); unset, nothing but loopback is trusted, as before.
+  app.set('trust proxy', process.env.TRUST_PROXY || 'loopback');
 
   app.set('views', path.resolve(__dirname, '..', 'views'));
   app.set('view engine', 'ejs');

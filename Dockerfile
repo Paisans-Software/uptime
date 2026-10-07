@@ -52,6 +52,11 @@ COPY --from=build /app /app
 RUN mkdir -p /data /app/logs \
  && chown -R node:node /data /app
 
+# Started as root (the paisans toolkit does), the entrypoint hands /data and
+# the seed file to node and drops to it; started as node it does nothing.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
+
 USER node
 
 VOLUME ["/data"]
@@ -61,5 +66,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "src/server.js"]
