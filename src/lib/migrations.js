@@ -666,7 +666,7 @@ async function run() {
     logger.info({ index: 'uq_users_oidc_identity' }, 'migrations.index_added');
   }
 
-  // Paisans: a channel that opts in is attached to every monitor a seed file
+  // A channel that opts in is attached to every monitor a seed file
   // creates (src/lib/seed.js), so an admin who subscribes once hears about
   // apps added later instead of finding them silently unalerted.
   await addColumn('channels', 'auto_attach_managed', 'INTEGER NOT NULL DEFAULT 0', 'TINYINT(1) NOT NULL DEFAULT 0');

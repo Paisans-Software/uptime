@@ -18,7 +18,7 @@ async function main() {
   require('./lib/oidc').checkConfig();
   await db.ensureSchema();
   await require('./lib/migrations').run();
-  // A deployment that renders its monitors (the paisans toolkit) names the
+  // A deployment that renders its monitors from its own configuration names the
   // file here. A seed that cannot be read stops the boot on purpose: running
   // on yesterday's monitors without saying so is worse than not running.
   if (process.env.SEED_FILE) {

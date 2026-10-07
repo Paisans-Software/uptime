@@ -52,7 +52,7 @@ COPY --from=build /app /app
 RUN mkdir -p /data /app/logs \
  && chown -R node:node /data /app
 
-# Started as root (the paisans toolkit does), the entrypoint hands /data and
+# Started as root (as a deployment tool may do), the entrypoint hands /data and
 # the seed file to node and drops to it; started as node it does nothing.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh

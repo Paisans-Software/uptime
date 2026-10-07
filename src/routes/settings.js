@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const db = require('../db');
 const email = require('../lib/email');
+const seed = require('../lib/seed');
 const maintenance = require('../lib/maintenance');
 const apiTokens = require('../lib/apiTokens');
 const brandingLib = require('../lib/branding');
@@ -80,6 +81,8 @@ router.get('/settings/smtp', async (req, res, next) => {
       title: 'Email settings (SMTP)',
       settings: s,
       isConfigured: email.isConfigured(s),
+      smtpLocked: seed.smtpManaged(),
+      smtpLockedMessage: seed.SMTP_LOCKED_MESSAGE,
     });
   } catch (err) {
     next(err);
@@ -88,6 +91,10 @@ router.get('/settings/smtp', async (req, res, next) => {
 
 router.post('/settings/smtp', async (req, res, next) => {
   try {
+    if (seed.smtpManaged()) {
+      req.flash('error', seed.SMTP_LOCKED_MESSAGE);
+      return res.redirect('/settings/smtp');
+    }
     const b = req.body || {};
     const payload = {
       smtp_host: (b.smtp_host || '').trim() || null,
