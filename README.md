@@ -338,6 +338,31 @@ OIDC_VIEWER_GROUP=uptime-viewers
 
 Existing local users who want to keep their monitors and grants should use **Connect SSO** before their first SSO sign-in; otherwise SSO creates a separate account for them.
 
+### Seeding from a file
+
+A deployment that generates its own monitors can name a JSON file in `SEED_FILE`. On every start, after migrations and before monitoring begins, the file is applied:
+
+```json
+{
+  "settings": { "smtp_host": "smtp.example.org", "smtp_port": 587, "smtp_secure": false, "status_page_enabled": false },
+  "monitors": [
+    { "name": "web — public", "monitor_type": "active", "url": "https://example.org/healthz", "expected_status": "200" },
+    { "name": "db host — ping", "monitor_type": "ping", "ping_host": "10.0.0.2" }
+  ]
+}
+```
+
+- **Settings** may be any of `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from_address`, `smtp_from_name` and `status_page_enabled`. Only the keys present are written.
+- **Monitors** use the same fields as the REST API. The file owns every monitor tagged `managed`: those are created, updated and deleted to match it. A monitor without that tag is never touched, even when its name matches one in the file.
+- **Channel links on an existing monitor are never changed**, so the subscriptions admins choose survive every restart. A new monitor joins every channel with **Attach to new managed monitors** ticked.
+- An entry the app rejects is skipped with a warning and the monitor already under that name is kept. A file with no `monitors` key changes no monitor. A file that cannot be read stops the boot.
+
+### Running as root, and behind a proxy
+
+Started as root, the image's entrypoint chowns `/data` to `node`, copies `SEED_FILE` to a `node`-owned file (so the seed can be a root-only 0600 file holding the SMTP password), and drops to `node` before starting. Started as any other user it does nothing.
+
+Behind a reverse proxy on another host, set `TRUST_PROXY` to that proxy's address or network (Express `trust proxy` syntax). Without it only loopback is trusted, so every request appears to come from the proxy and the login rate limiter would treat all users as one.
+
 ---
 
 ## Heartbeat monitors (passive / cron monitoring)
