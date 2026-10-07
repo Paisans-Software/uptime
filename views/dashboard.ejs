@@ -193,6 +193,7 @@
     <input type="hidden" name="return_to" value="<%= '/' + (qsExceptPage ? '?' + qsExceptPage : '') %>">
     <input type="hidden" name="action" id="bulk-action" value="">
     <input type="hidden" name="tag_id" id="bulk-tag-id" value="">
+    <input type="hidden" name="channel_id" id="bulk-channel-id" value="">
 
   <div class="row row-cards row-cards-tight" id="site-cards">
     <% sites.forEach(function(s) {
@@ -391,6 +392,20 @@
         </button>
         <button type="button" class="btn btn-sm btn-secondary" data-bulk-action="tag_remove">
           <i class="ti ti-tag-off me-1"></i> Remove tag
+        </button>
+      <% } %>
+      <% if (typeof allChannels !== 'undefined' && allChannels.length) { %>
+        <select class="form-select form-select-sm w-auto" id="bulk-channel-select">
+          <option value="">— channel —</option>
+          <% allChannels.forEach(function(ch) { %>
+            <option value="<%= ch.id %>"><%= ch.name %></option>
+          <% }); %>
+        </select>
+        <button type="button" class="btn btn-sm btn-secondary" data-bulk-action="channel_add">
+          <i class="ti ti-bell-plus me-1"></i> Attach channel
+        </button>
+        <button type="button" class="btn btn-sm btn-secondary" data-bulk-action="channel_remove">
+          <i class="ti ti-bell-off me-1"></i> Detach channel
         </button>
       <% } %>
       <button type="button" class="btn btn-sm btn-danger ms-auto" data-bulk-action="delete">

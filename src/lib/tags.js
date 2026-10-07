@@ -153,7 +153,11 @@ async function detachFromSites(siteIds, tagId) {
   );
 }
 
+// The tag a seed file (src/lib/seed.js) puts on every monitor it owns.
+const MANAGED_TAG = 'managed';
+
 module.exports = {
+  MANAGED_TAG,
   COLOR_PALETTE,
   normalizeColor,
   normalizeName,

@@ -188,6 +188,8 @@ router.get('/', async (req, res, next) => {
       activeMaintenance: activeWindows,
       allTags,
       activeTag,
+      // Only an admin is offered channel bulk actions (the route enforces it).
+      allChannels: acl.isAdmin(req.session.user) ? await channels.listChannels() : [],
       isAdmin: acl.isAdmin(req.session.user),
       canCreate: acl.isAdmin(req.session.user) || req.session.user?.role === 'editor',
     });
@@ -618,9 +620,13 @@ router.get('/incidents.csv', async (req, res, next) => {
 
 // Bulk actions invoked from the dashboard. Accepts:
 //   action     ∈ pause | resume | delete | tag_add | tag_remove
+//                | channel_add | channel_remove
 //   site_ids[] = array of integer site IDs
 //   tag_id     = integer (only for tag_add / tag_remove)
-const BULK_ACTIONS = new Set(['pause', 'resume', 'delete', 'tag_add', 'tag_remove']);
+//   channel_id = integer (only for channel_add / channel_remove)
+const BULK_ACTIONS = new Set(['pause', 'resume', 'delete', 'tag_add', 'tag_remove', 'channel_add', 'channel_remove']);
+// Channels are admin-only everywhere else, so attaching one in bulk is too.
+const ADMIN_BULK_ACTIONS = new Set(['channel_add', 'channel_remove']);
 
 router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, next) => {
   try {
@@ -628,6 +634,10 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
     if (!BULK_ACTIONS.has(action)) {
       req.flash('error', `Unknown bulk action: ${action}`);
       return res.redirect('/');
+    }
+    if (ADMIN_BULK_ACTIONS.has(action) && !acl.isAdmin(req.session.user)) {
+      req.flash('error', 'Only an admin can attach or detach notification channels.');
+      return res.redirect(safeReturnTo(req.body.return_to));
     }
     let raw = req.body.site_ids;
     if (!Array.isArray(raw)) raw = raw == null ? [] : [raw];
@@ -680,6 +690,17 @@ router.post('/sites/bulk', acl.requireRole('admin', 'editor'), async (req, res, 
       } else {
         await tagsLib.attachToSites(siteIds, tagId);
         req.flash('success', `Tagged ${siteIds.length} monitor${siteIds.length === 1 ? '' : 's'}`);
+      }
+    } else if (action === 'channel_add' || action === 'channel_remove') {
+      const channelId = parseId(req.body.channel_id);
+      if (channelId == null || !(await channels.getChannel(channelId))) {
+        req.flash('error', 'Pick a channel');
+      } else if (action === 'channel_add') {
+        await channels.attachToSites(siteIds, channelId);
+        req.flash('success', `Attached the channel to ${siteIds.length} monitor${siteIds.length === 1 ? '' : 's'}`);
+      } else {
+        await channels.detachFromSites(siteIds, channelId);
+        req.flash('success', `Detached the channel from ${siteIds.length} monitor${siteIds.length === 1 ? '' : 's'}`);
       }
     } else if (action === 'tag_remove') {
       const tagId = parseId(req.body.tag_id);
