@@ -347,13 +347,15 @@ A deployment that generates its own monitors can name a JSON file in `SEED_FILE`
   "settings": { "smtp_host": "smtp.example.org", "smtp_port": 587, "smtp_secure": false, "status_page_enabled": false },
   "monitors": [
     { "name": "web — public", "monitor_type": "active", "url": "https://example.org/healthz", "expected_status": "200" },
-    { "name": "db host — ping", "monitor_type": "ping", "ping_host": "10.0.0.2" }
+    { "name": "db host — ping", "monitor_type": "ping", "ping_host": "10.0.0.2" },
+    { "name": "home-a heartbeat", "monitor_type": "heartbeat", "interval_seconds": 60, "heartbeat_grace_seconds": 120, "heartbeat_token": "6f1d2c3b4a59687706f5e4d3c2b1a090" }
   ]
 }
 ```
 
 - **Settings** may be any of `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from_address`, `smtp_from_name` and `status_page_enabled`. Only the keys present are written.
 - **Monitors** use the same fields as the REST API. The file owns every monitor tagged `managed`: those are created, updated and deleted to match it. A monitor without that tag is never touched, even when its name matches one in the file.
+- **A heartbeat entry may set its own `heartbeat_token`** (16 to 64 hex characters), so the deployment can hand a host its `/ping/<token>` URL at the same time as it writes the file, with no API call after start. The file's token wins: a new monitor is created with it and an existing managed monitor is switched to it. An entry without the field keeps whatever token the monitor has (a new one gets a random token, as from the API). A token is never silently replaced: an entry whose token is malformed, is already used by an earlier entry in the file, or is already held by another monitor is skipped with a warning, and the monitor already under that name is kept as it was. The warning names the entry and the reason, never the token. On any other monitor type the field is ignored.
 - **Channel links on an existing monitor are never changed**, so the subscriptions admins choose survive every restart. A new monitor joins every channel with **Attach to new managed monitors** ticked. Switching that flag on also attaches the channel once to every monitor the file already manages; detaching it from some afterwards sticks. The dashboard's bulk bar can attach or detach a channel on any selection of monitors (admins only).
 - An entry the app rejects is skipped with a warning and the monitor already under that name is kept. A file with no `monitors` key changes no monitor. A file that cannot be read stops the boot.
 
