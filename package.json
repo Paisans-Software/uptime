@@ -1,6 +1,6 @@
 {
   "name": "uptime",
-  "version": "1.1.0-oidc.3",
+  "version": "1.1.0-oidc.4",
   "description": "Self-hosted, open-source uptime monitor in Node.js with HTTP/HTTPS checks, body and JSON-path assertions, passive heartbeat URLs (Healthchecks.io style), incident tracking, response-time graphs, multi-channel alerts (Discord, email, webhook), Cloudflare-aware probing, dark-mode dashboard, SQLite or MySQL.",
   "main": "src/server.js",
   "type": "commonjs",
