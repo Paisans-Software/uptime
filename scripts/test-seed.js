@@ -24,7 +24,7 @@ const http = (name, url, extra = {}) => ({
   expected_status: '200', follow_redirects: false, interval_seconds: 60,
   timeout_ms: 10000, failure_threshold: 2, ...extra,
 });
-const ping = (name, host) => ({ name, monitor_type: 'ping', ping_host: host, interval_seconds: 60, timeout_ms: 10000, failure_threshold: 2 });
+const ping = (name, host, extra = {}) => ({ name, monitor_type: 'ping', ping_host: host, interval_seconds: 60, timeout_ms: 10000, failure_threshold: 2, ...extra });
 const byName = async (name) => (await db.query('SELECT * FROM sites WHERE name = ?', [name]))[0];
 
 async function main() {
@@ -114,6 +114,78 @@ async function main() {
   assert.strictEqual(r.monitors, null);
   assert.ok(await byName('talk — public'));
   assert.strictEqual((await byName('docs — public')).id, handId);
+
+  // Heartbeat tokens. A deployment that renders the file also tells each host
+  // which /ping/<token> URL to push to, so the file may set the token and the
+  // app must never swap it for one the host does not know.
+  const hb = (name, extra = {}) => ({ name, monitor_type: 'heartbeat', interval_seconds: 60, heartbeat_grace_seconds: 120, ...extra });
+  const T1 = 'a'.repeat(32);
+  const T2 = 'b'.repeat(32);
+  const T3 = 'c'.repeat(32);
+  const TH = 'd'.repeat(32);
+  const hbHand = (await sitePayload.insertSite(sitePayload.buildPayload(hb('cron by hand')), { heartbeatToken: TH })).site;
+  assert.strictEqual(hbHand.heartbeat_token, TH);
+  const keep = [http('talk — public', 'https://talk2.example.test/'), http('talk — direct (home-a)', 'http://10.44.0.1:8080/')];
+
+  // Insert with a token; a token on a non-heartbeat entry is not a token field
+  // for that type and is dropped, as buildPayload drops every inapplicable
+  // field.
+  write({ monitors: [...keep, hb('home-a heartbeat', { heartbeat_token: T1 }), ping('home-b — ping', '10.44.0.2', { heartbeat_token: T2 })] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.skipped, []);
+  assert.deepStrictEqual(r.monitors.created.sort(), ['home-a heartbeat', 'home-b — ping']);
+  const hbSite = await byName('home-a heartbeat');
+  assert.strictEqual(hbSite.heartbeat_token, T1);
+  assert.strictEqual((await byName('home-b — ping')).heartbeat_token, null);
+
+  // Update changes the token (the file's wins); the monitor is the same row.
+  write({ monitors: [...keep, hb('home-a heartbeat', { heartbeat_token: T2 })] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.updated.sort(), ['home-a heartbeat', 'talk — direct (home-a)', 'talk — public']);
+  assert.strictEqual((await byName('home-a heartbeat')).id, hbSite.id);
+  assert.strictEqual((await byName('home-a heartbeat')).heartbeat_token, T2);
+
+  // No token in the file: the token stays what it was.
+  write({ monitors: [...keep, hb('home-a heartbeat')] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.skipped, []);
+  assert.strictEqual((await byName('home-a heartbeat')).heartbeat_token, T2);
+
+  // An invalid token skips the entry and keeps the monitor, token included.
+  for (const bad of ['zz', '', 'a'.repeat(15), 'a'.repeat(65), 'g'.repeat(32), 12345]) {
+    write({ monitors: [...keep, hb('home-a heartbeat', { heartbeat_token: bad })] });
+    r = await seed.applySeedFile(file);
+    assert.deepStrictEqual(r.monitors.skipped.map((x) => x.name), ['home-a heartbeat']);
+    if (bad !== '') assert.ok(!JSON.stringify(r.monitors.skipped).includes(String(bad)), 'skip reason must not echo the token');
+    assert.strictEqual((await byName('home-a heartbeat')).heartbeat_token, T2);
+  }
+
+  // A token held by a monitor the file does not own is never taken, and never
+  // replaced with a random one: on update the managed monitor keeps its own,
+  // on insert nothing is created.
+  write({ monitors: [...keep, hb('home-a heartbeat', { heartbeat_token: TH }), hb('home-c heartbeat', { heartbeat_token: TH })] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.skipped.map((x) => x.name), ['home-a heartbeat', 'home-c heartbeat']);
+  assert.ok(!JSON.stringify(r.monitors.skipped).includes(TH));
+  assert.strictEqual((await byName('home-a heartbeat')).heartbeat_token, T2);
+  assert.strictEqual(await byName('home-c heartbeat'), undefined);
+  assert.strictEqual((await byName('cron by hand')).heartbeat_token, TH);
+
+  // Two entries with the same token: the first wins, the later is skipped.
+  write({ monitors: [...keep, hb('home-a heartbeat', { heartbeat_token: T3 }), hb('home-c heartbeat', { heartbeat_token: T3 })] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.skipped.map((x) => x.name), ['home-c heartbeat']);
+  assert.strictEqual((await byName('home-a heartbeat')).heartbeat_token, T3);
+  assert.strictEqual(await byName('home-c heartbeat'), undefined);
+
+  // A site renamed in the file keeps its token: the old managed monitor goes
+  // and the new one takes the token in the same pass.
+  write({ monitors: [...keep, hb('home-a renamed', { heartbeat_token: T3 })] });
+  r = await seed.applySeedFile(file);
+  assert.deepStrictEqual(r.monitors.skipped, []);
+  assert.deepStrictEqual(r.monitors.deleted, ['home-a heartbeat']);
+  assert.deepStrictEqual(r.monitors.created, ['home-a renamed']);
+  assert.strictEqual((await byName('home-a renamed')).heartbeat_token, T3);
   console.log('ok');
 }
 

@@ -71,6 +71,33 @@ async function managedTagId() {
   return Number(await tagsLib.createTag(MANAGED_TAG));
 }
 
+// A heartbeat entry may carry `heartbeat_token`, the token in the /ping/<token>
+// URL the deployment has already handed to the host that will push to it. The
+// host knows no other URL, so the token must be stored exactly as given or the
+// entry refused: insertSite and updateSite swap a conflicting token for a
+// random one, which would leave the host pushing to a dead URL, so every
+// conflict is caught here first. The file decides the token (its host is
+// already configured with it), and an entry without one keeps whatever the
+// monitor has. On any other monitor type the field is dropped, as buildPayload
+// drops every field that does not apply to the type. Error messages never
+// carry the token: they are logged, and the token marks the site up.
+const TOKEN_RE = /^[a-f0-9]{16,64}$/i;
+
+async function seedToken(raw, id, seen) {
+  if (raw.monitor_type !== 'heartbeat' || raw.heartbeat_token == null) return { token: null };
+  const token = raw.heartbeat_token;
+  if (typeof token !== 'string' || !TOKEN_RE.test(token)) {
+    return { error: 'heartbeat_token must be 16 to 64 hex characters' };
+  }
+  if (seen.has(token)) return { error: 'heartbeat_token is already used by an earlier entry in this file' };
+  const holder = await db.query(
+    'SELECT name FROM sites WHERE heartbeat_token = ? AND id <> ? LIMIT 1',
+    [token, id || 0]
+  );
+  if (holder.length) return { error: `heartbeat_token is already used by the monitor named "${holder[0].name}"` };
+  return { token };
+}
+
 async function reconcileMonitors(monitors) {
   const tagId = await managedTagId();
   const owned = await db.query(
@@ -82,11 +109,20 @@ async function reconcileMonitors(monitors) {
   const summary = { created: [], updated: [], deleted: [], skipped: [] };
   // Every name the file mentions, valid or not: an entry the fork rejects
   // must not cost the deployment the monitor it already has under that name.
-  const named = new Set();
+  const named = new Set(monitors.map((raw) => String((raw && raw.name) || '').trim()));
 
+  // Deletions first, so a site the file renamed can take its token from the
+  // monitor that held it under the old name in the same pass.
+  for (const [name, id] of ownedByName) {
+    if (named.has(name)) continue;
+    // ON DELETE CASCADE takes its checks, incidents and channel links.
+    await db.query('DELETE FROM sites WHERE id = ?', [id]);
+    summary.deleted.push(name);
+  }
+
+  const tokensSeen = new Set();
   for (const raw of monitors) {
     const name = String((raw && raw.name) || '').trim();
-    named.add(name);
     let data;
     let errors;
     try {
@@ -100,13 +136,20 @@ async function reconcileMonitors(monitors) {
       continue;
     }
     const id = ownedByName.get(data.name);
+    const { token, error } = await seedToken(raw, id, tokensSeen);
+    if (error) {
+      summary.skipped.push({ name, errors: [error] });
+      continue;
+    }
+    if (token) tokensSeen.add(token);
     if (id) {
       const [current] = await db.query('SELECT * FROM sites WHERE id = ?', [id]);
       for (const field of ADMIN_FIELDS) {
         if (!Object.prototype.hasOwnProperty.call(raw, field)) data[field] = current[field];
       }
-      // No channelIds and no tagIds: updateSite leaves both as they are.
-      await sitePayload.updateSite(id, data, {});
+      // No channelIds and no tagIds: updateSite leaves both as they are. No
+      // heartbeatToken: it leaves the token as it is too.
+      await sitePayload.updateSite(id, data, { heartbeatToken: token });
       summary.updated.push(data.name);
       continue;
     }
@@ -115,15 +158,8 @@ async function reconcileMonitors(monitors) {
       summary.skipped.push({ name: data.name, errors: ['a monitor not tagged managed already has this name'] });
       continue;
     }
-    await sitePayload.insertSite(data, { channelIds: autoChannels, tagIds: [tagId] });
+    await sitePayload.insertSite(data, { channelIds: autoChannels, tagIds: [tagId], heartbeatToken: token });
     summary.created.push(data.name);
-  }
-
-  for (const [name, id] of ownedByName) {
-    if (named.has(name)) continue;
-    // ON DELETE CASCADE takes its checks, incidents and channel links.
-    await db.query('DELETE FROM sites WHERE id = ?', [id]);
-    summary.deleted.push(name);
   }
   return summary;
 }
