@@ -16,6 +16,7 @@ const db = require('../src/db');
 const channels = require('../src/lib/channels');
 const sitePayload = require('../src/lib/sitePayload');
 const seed = require('../src/lib/seed');
+const emailLib = require('../src/lib/email');
 
 const file = path.join(dir, 'seed.json');
 const write = (obj) => fs.writeFileSync(file, JSON.stringify(obj));
@@ -40,7 +41,7 @@ async function main() {
   const handId = (await sitePayload.insertSite(hand, {})).id;
 
   write({
-    settings: { smtp_host: 'smtp.example.test', smtp_port: 465, smtp_secure: true, status_page_enabled: false },
+    settings: { smtp_host: 'smtp.example.test', smtp_port: 465, smtp_secure: true, smtp_require_tls: true, status_page_enabled: false },
     monitors: [
       http('talk — public', 'https://talk.example.test/'),
       http('talk — direct (home-a)', 'http://10.44.0.1:8080/', { request_headers: { Host: 'talk.example.test' } }),
@@ -58,7 +59,32 @@ async function main() {
   assert.strictEqual(s.smtp_host, 'smtp.example.test');
   assert.strictEqual(Number(s.smtp_port), 465);
   assert.strictEqual(Number(s.smtp_secure), 1);
+  assert.strictEqual(Number(s.smtp_require_tls), 1);
   assert.strictEqual(Number(s.status_page_enabled), 0);
+
+  // requireTLS only means something without implicit TLS: with smtp_secure on,
+  // the connection is TLS from the first byte.
+  assert.strictEqual(emailLib.transportOptions(s).secure, true);
+  assert.strictEqual(emailLib.transportOptions(s).requireTLS, false);
+  const opts = (secure, requireTls) => emailLib.transportOptions({ smtp_host: 'h', smtp_port: 587, smtp_secure: secure, smtp_require_tls: requireTls });
+  assert.strictEqual(opts(0, 1).requireTLS, true);
+  assert.strictEqual(opts(0, 0).requireTLS, false);
+  assert.strictEqual(opts(1, 1).requireTLS, false);
+  assert.strictEqual(opts(1, 0).requireTLS, false);
+  assert.strictEqual(opts(0, null).requireTLS, false);
+
+  // STARTTLS enforced: the file decides the flag at every apply, both ways.
+  write({ settings: { smtp_port: 587, smtp_secure: false, smtp_require_tls: true } });
+  await seed.applySeedFile(file);
+  let s2 = (await db.query('SELECT * FROM settings WHERE id = 1'))[0];
+  assert.strictEqual(Number(s2.smtp_secure), 0);
+  assert.strictEqual(Number(s2.smtp_require_tls), 1);
+  assert.strictEqual(emailLib.transportOptions(s2).requireTLS, true);
+  write({ settings: { smtp_require_tls: false } });
+  await seed.applySeedFile(file);
+  s2 = (await db.query('SELECT * FROM settings WHERE id = 1'))[0];
+  assert.strictEqual(Number(s2.smtp_require_tls), 0);
+  assert.strictEqual(emailLib.transportOptions(s2).requireTLS, false);
 
   const talk = await byName('talk — public');
   assert.deepStrictEqual(await channels.listSiteChannelIds(talk.id), [auto]);

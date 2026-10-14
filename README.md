@@ -213,7 +213,7 @@ If you want a **lightweight self-hosted Uptime Kuma alternative** that you can `
 - Tokens stored as SHA-256 with last-used timestamp tracked; the plaintext token is shown exactly once at creation.
 
 ### Settings
-- **SMTP settings panel** with "Send test email" and "Verify connection". Password never re-displayed.
+- **SMTP settings panel** with "Send test email" and "Verify connection". Password never re-displayed. **Require STARTTLS** refuses to send when a server on a plaintext port does not upgrade the connection.
 - **Backup & restore (JSON import / export)** — export all or a selected subset of monitors, channels, and SMTP settings to a portable JSON file. Restore with conflict strategy (skip / replace / rename) and selective per-section import. Live preview shows what's in the file before you commit.
 - **Maintenance windows** UI — CRUD, toggle, timezone-aware cron (`cron-parser`) or one-off.
 - **API tokens** UI — create / revoke with cURL + Prometheus scrape examples.
@@ -344,7 +344,7 @@ A deployment that generates its own monitors can name a JSON file in `SEED_FILE`
 
 ```json
 {
-  "settings": { "smtp_host": "smtp.example.org", "smtp_port": 587, "smtp_secure": false, "status_page_enabled": false },
+  "settings": { "smtp_host": "smtp.example.org", "smtp_port": 587, "smtp_secure": false, "smtp_require_tls": true, "status_page_enabled": false },
   "monitors": [
     { "name": "web — public", "monitor_type": "active", "url": "https://example.org/healthz", "expected_status": "200" },
     { "name": "db host — ping", "monitor_type": "ping", "ping_host": "10.0.0.2" },
@@ -353,7 +353,7 @@ A deployment that generates its own monitors can name a JSON file in `SEED_FILE`
 }
 ```
 
-- **Settings** may be any of `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from_address`, `smtp_from_name` and `status_page_enabled`. Only the keys present are written.
+- **Settings** may be any of `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_require_tls`, `smtp_user`, `smtp_pass`, `smtp_from_address`, `smtp_from_name` and `status_page_enabled`. Only the keys present are written. `smtp_secure` (boolean) connects with TLS from the start, as on port 465. `smtp_require_tls` (boolean, default false) applies when `smtp_secure` is false: the connection must be upgraded with STARTTLS, and a server that does not offer it fails the send instead of receiving the message, and any credentials, in plaintext. Both are the **TLS (465)** and **Require STARTTLS** switches under **Settings → SMTP**.
 - **Monitors** use the same fields as the REST API. The file owns every monitor tagged `managed`: those are created, updated and deleted to match it. A monitor without that tag is never touched, even when its name matches one in the file.
 - **A heartbeat entry may set its own `heartbeat_token`** (16 to 64 hex characters), so the deployment can hand a host its `/ping/<token>` URL at the same time as it writes the file, with no API call after start. The file's token wins: a new monitor is created with it and an existing managed monitor is switched to it. An entry without the field keeps whatever token the monitor has (a new one gets a random token, as from the API). A token is never silently replaced: an entry whose token is malformed, is already used by an earlier entry in the file, or is already held by another monitor is skipped with a warning, and the monitor already under that name is kept as it was. The warning names the entry and the reason, never the token. On any other monitor type the field is ignored.
 - **Channel links on an existing monitor are never changed**, so the subscriptions admins choose survive every restart. A new monitor joins every channel with **Attach to new managed monitors** ticked. Switching that flag on also attaches the channel once to every monitor the file already manages; detaching it from some afterwards sticks. The dashboard's bulk bar can attach or detach a channel on any selection of monitors (admins only).

@@ -142,6 +142,7 @@ async function exportConfig({ siteIds, includeChannels, includeSmtp, includeSmtp
         smtp_host: s.smtp_host || null,
         smtp_port: Number(s.smtp_port) || 587,
         smtp_secure: s.smtp_secure ? 1 : 0,
+        smtp_require_tls: s.smtp_require_tls ? 1 : 0,
         smtp_user: s.smtp_user || null,
         smtp_from_address: s.smtp_from_address || null,
         smtp_from_name: s.smtp_from_name || 'Uptime',
@@ -422,14 +423,14 @@ async function importMonitors(items, conflict, nameToChannelId, log) {
 
 async function importSmtp(payload, log) {
   if (!payload || typeof payload !== 'object') return { applied: false, reason: 'no settings in backup' };
-  const fields = ['smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
+  const fields = ['smtp_host', 'smtp_port', 'smtp_secure', 'smtp_require_tls', 'smtp_user', 'smtp_pass',
     'smtp_from_address', 'smtp_from_name'];
   const cur = await loadSettingsRow();
   const out = {};
   for (const f of fields) {
     if (Object.prototype.hasOwnProperty.call(payload, f)) {
       let v = payload[f];
-      if (f === 'smtp_secure') v = v ? 1 : 0;
+      if (f === 'smtp_secure' || f === 'smtp_require_tls') v = v ? 1 : 0;
       if (f === 'smtp_port') v = Number(v) || 587;
       out[f] = v;
     } else {
@@ -440,8 +441,8 @@ async function importSmtp(payload, log) {
     }
   }
   await db.query(
-    `UPDATE settings SET smtp_host=?, smtp_port=?, smtp_secure=?, smtp_user=?, smtp_pass=?, smtp_from_address=?, smtp_from_name=? WHERE id=1`,
-    [out.smtp_host, out.smtp_port, out.smtp_secure, out.smtp_user, out.smtp_pass, out.smtp_from_address, out.smtp_from_name]
+    `UPDATE settings SET smtp_host=?, smtp_port=?, smtp_secure=?, smtp_require_tls=?, smtp_user=?, smtp_pass=?, smtp_from_address=?, smtp_from_name=? WHERE id=1`,
+    [out.smtp_host, out.smtp_port, out.smtp_secure, out.smtp_require_tls, out.smtp_user, out.smtp_pass, out.smtp_from_address, out.smtp_from_name]
   );
   log.info({ smtp_host: out.smtp_host }, 'backup.smtp_imported');
   return { applied: true };

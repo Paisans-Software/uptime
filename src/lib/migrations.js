@@ -671,6 +671,10 @@ async function run() {
   // apps added later instead of finding them silently unalerted.
   await addColumn('channels', 'auto_attach_managed', 'INTEGER NOT NULL DEFAULT 0', 'TINYINT(1) NOT NULL DEFAULT 0');
 
+  // With smtp_secure off, require the STARTTLS upgrade instead of falling
+  // back to plaintext when the server does not offer it (src/lib/email.js).
+  await addColumn('settings', 'smtp_require_tls', 'INTEGER NOT NULL DEFAULT 0', 'TINYINT(1) NOT NULL DEFAULT 0');
+
   logger.info('migrations.complete');
 }
 

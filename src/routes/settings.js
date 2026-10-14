@@ -100,6 +100,7 @@ router.post('/settings/smtp', async (req, res, next) => {
       smtp_host: (b.smtp_host || '').trim() || null,
       smtp_port: parseInt(b.smtp_port, 10) || 587,
       smtp_secure: b.smtp_secure === '1' || b.smtp_secure === 'on' ? 1 : 0,
+      smtp_require_tls: b.smtp_require_tls === '1' || b.smtp_require_tls === 'on' ? 1 : 0,
       smtp_user: (b.smtp_user || '').trim() || null,
       smtp_pass: (b.smtp_pass != null && b.smtp_pass !== '') ? b.smtp_pass : null,
       smtp_from_address: (b.smtp_from_address || '').trim() || null,
