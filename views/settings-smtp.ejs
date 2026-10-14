@@ -29,6 +29,13 @@
           <span class="form-check-label">TLS (465)</span>
         </label>
       </div>
+      <div class="col-12">
+        <label class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" name="smtp_require_tls" value="1" <%= settings.smtp_require_tls ? 'checked' : '' %>>
+          <span class="form-check-label">Require STARTTLS</span>
+        </label>
+        <div class="form-hint">Without TLS (465), refuse to send unless the server upgrades the connection with STARTTLS, instead of falling back to plaintext.</div>
+      </div>
       <div class="col-md-6">
         <label class="form-label">Username</label>
         <input type="text" name="smtp_user" class="form-control" value="<%= settings.smtp_user || '' %>" placeholder="username or full email" autocomplete="off">

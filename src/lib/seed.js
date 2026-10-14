@@ -25,10 +25,10 @@ const { MANAGED_TAG } = tagsLib;
 // The settings the file may carry, and nothing else: a file that could set
 // any column could change sign in or branding without anyone deciding to.
 const SETTINGS_FIELDS = [
-  'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
+  'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_require_tls', 'smtp_user', 'smtp_pass',
   'smtp_from_address', 'smtp_from_name', 'status_page_enabled',
 ];
-const BOOLEAN_SETTINGS = new Set(['smtp_secure', 'status_page_enabled']);
+const BOOLEAN_SETTINGS = new Set(['smtp_secure', 'smtp_require_tls', 'status_page_enabled']);
 
 // Columns an admin sets in the UI rather than the deployment in the file.
 // updateSite writes every column buildPayload produces, and buildPayload

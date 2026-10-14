@@ -15,6 +15,7 @@ async function updateSettings(payload) {
     'smtp_host',
     'smtp_port',
     'smtp_secure',
+    'smtp_require_tls',
     'smtp_user',
     'smtp_pass',
     'smtp_from_address',
@@ -30,16 +31,27 @@ function isConfigured(s) {
   return !!(s && s.smtp_host && s.smtp_from_address);
 }
 
-function buildTransport(s) {
-  return nodemailer.createTransport({
+// With `secure` off, nodemailer upgrades with STARTTLS only when the server
+// offers it and otherwise sends in plaintext, credentials included.
+// `smtp_require_tls` makes the upgrade mandatory: a server that does not offer
+// it fails the send. With `secure` on the connection is TLS from the start and
+// the flag has nothing to add.
+function transportOptions(s) {
+  const secure = !!s.smtp_secure;
+  return {
     host: s.smtp_host,
     port: Number(s.smtp_port) || 587,
-    secure: !!s.smtp_secure,
+    secure,
+    requireTLS: !secure && !!s.smtp_require_tls,
     auth:
       s.smtp_user && s.smtp_pass
         ? { user: s.smtp_user, pass: s.smtp_pass }
         : undefined,
-  });
+  };
+}
+
+function buildTransport(s) {
+  return nodemailer.createTransport(transportOptions(s));
 }
 
 function fromAddress(s) {
@@ -84,4 +96,4 @@ async function verifyConnection() {
   return true;
 }
 
-module.exports = { getSettings, updateSettings, isConfigured, sendMail, verifyConnection, fromAddress };
+module.exports = { getSettings, updateSettings, isConfigured, sendMail, verifyConnection, fromAddress, transportOptions };
