@@ -266,6 +266,7 @@ router.get('/sites/new', acl.requireRole('admin', 'editor'), async (req, res, ne
         cloudflare_mode: 0,
         paused: 0,
         double_verify: 0,
+        status_page_excluded: 1,
         owner_user_id: req.session.user?.id || null,
       },
       allChannels,
