@@ -112,7 +112,13 @@ function buildPayload(body) {
 
   const display_name = (body.display_name || '').toString().trim().slice(0, 255) || null;
   const status_page_group = (body.status_page_group || '').toString().trim().slice(0, 120) || null;
-  const status_page_excluded = coerceBool(body.status_page_excluded);
+  // Hidden from the public status page unless whoever made it says
+  // otherwise. The form sends a hidden 0 ahead of its checkbox, so a ticked
+  // box arrives as ['0', '1'] and the last value is the one that counts.
+  const excluded_raw = Array.isArray(body.status_page_excluded)
+    ? body.status_page_excluded[body.status_page_excluded.length - 1]
+    : body.status_page_excluded;
+  const status_page_excluded = excluded_raw == null ? 1 : coerceBool(excluded_raw);
   const status_page_order = Math.max(0, parseInt(body.status_page_order, 10) || 0);
 
   const cert_warn_raw = parseInt(body.cert_expiry_warn_days, 10);
@@ -541,6 +547,8 @@ async function cloneSite(sourceId, { ownerUserId = null } = {}) {
     catch { data.request_headers = null; }
   }
   data.name = await uniqueCopyName(String(src.name || 'Monitor'));
+  // A copy is a monitor made by hand, so it starts off the status page too.
+  data.status_page_excluded = 1;
 
   const channelIds = await channels.listSiteChannelIds(sourceId);
   const tagIds = (await tagsLib.listSiteTags(sourceId)).map((t) => Number(t.id));
