@@ -10,6 +10,10 @@
 //   GET /status         -> HTML
 //   GET /status.json    -> same data as JSON
 //   GET /status.rss     -> Atom feed of recent incidents
+//
+// The page is public, so it carries state and timing only. A monitor's URL,
+// status code and the checker's error text name internal hosts and software
+// and stay on the authenticated dashboard.
 
 const express = require('express');
 const path = require('path');
@@ -65,7 +69,7 @@ async function ensureStatusPageAccess(req, res) {
 // Build the full data structure used by /status, /status.json, and /status.rss.
 async function buildStatusData() {
   const sites = await db.query(
-    `SELECT id, name, display_name, url, monitor_type, current_state, paused,
+    `SELECT id, name, display_name, current_state, paused,
             status_page_group, status_page_order, status_page_excluded
        FROM sites
       WHERE status_page_excluded = 0
@@ -89,13 +93,13 @@ async function buildStatusData() {
       id: s.id,
       name: s.name,
       display_name: s.display_name,
-      url: s.url,
-      monitor_type: s.monitor_type,
       current_state: s.current_state,
       status_page_group: s.status_page_group || '',
       daily,
       uptime_24h: typeof uptime24h === 'number' ? uptime24h : null,
-      last_check: last,
+      last_check: last
+        ? { checked_at: last.checked_at, is_up: last.is_up, response_time_ms: last.response_time_ms }
+        : null,
     });
   }
 
@@ -115,10 +119,17 @@ async function buildStatusData() {
   });
   const groups = groupNames.map((name) => ({ name, monitors: byGroup.get(name) }));
 
-  // Recent incidents — keep raw rows + human-readable duration.
+  // Recent incidents — timing and the monitor's name, plus human-readable duration.
   const raw = await stats.recentIncidentsGlobal(25);
   const incidents = raw.map((inc) => ({
-    ...inc,
+    id: inc.id,
+    site_id: inc.site_id,
+    site_name: inc.site_name,
+    site_display_name: inc.site_display_name,
+    status_page_group: inc.status_page_group,
+    started_at: inc.started_at,
+    ended_at: inc.ended_at,
+    duration_seconds: inc.duration_seconds,
     duration_human: inc.ended_at && inc.duration_seconds != null
       ? formatDuration(inc.duration_seconds)
       : '',
@@ -178,7 +189,7 @@ router.get('/status.rss', async (req, res, next) => {
     const entries = data.incidents.map((inc) => {
       const title = (inc.site_display_name || inc.site_name)
         + (inc.ended_at ? ' — resolved' : ' — ongoing');
-      const summary = (inc.last_error || '').trim() || 'Incident reported';
+      const summary = inc.ended_at ? 'Incident resolved' : 'Incident reported';
       const id = base + '/status#incident-' + inc.id;
       const ts = inc.ended_at || inc.started_at;
       return `<entry>
@@ -207,3 +218,4 @@ ${entries}
 
 module.exports = router;
 module.exports.loadStatusPageSettings = loadStatusPageSettings;
+module.exports.buildStatusData = buildStatusData;
