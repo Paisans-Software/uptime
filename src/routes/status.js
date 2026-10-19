@@ -218,3 +218,4 @@ ${entries}
 
 module.exports = router;
 module.exports.loadStatusPageSettings = loadStatusPageSettings;
+module.exports.buildStatusData = buildStatusData;
