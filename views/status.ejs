@@ -53,9 +53,6 @@
               <% if (inc.ended_at) { %> &middot; <%= inc.duration_human %><% } %>
             </span>
           </div>
-          <% if (inc.last_error) { %>
-            <div class="small text-secondary mt-1"><code><%= inc.last_error %></code></div>
-          <% } %>
         </li>
       <% }) %>
     </ul>
@@ -103,9 +100,6 @@
               Checked <span data-relative-time="<%= m.last_check.checked_at %>"><%= m.last_check.checked_at %></span>
               <% if (m.last_check.response_time_ms != null && m.current_state === 'up') { %>
                 &middot; <%= m.last_check.response_time_ms %> ms
-              <% } %>
-              <% if (m.current_state === 'down' && m.last_check.error_message) { %>
-                &middot; <span class="text-red"><%= m.last_check.error_message %></span>
               <% } %>
             </footer>
           <% } %>
